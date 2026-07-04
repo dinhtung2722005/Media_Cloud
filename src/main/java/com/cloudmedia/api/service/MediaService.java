@@ -88,4 +88,16 @@ public class MediaService {
 
         return mediaFileRepository.save(mediaFile);
     }
+    @Transactional
+    public void deleteMediaFile(String fileId, String userId) throws IOException {
+        // Xác thực quyền sở hữu file trước khi xóa
+        MediaFile file = getMediaFileById(fileId, userId);
+        
+        // Xóa file vật lý trên ổ đĩa cứng server
+        Path physicalPath = Paths.get(file.getStoragePath());
+        Files.deleteIfExists(physicalPath);
+
+        // Xóa siêu dữ liệu (metadata) khỏi Database
+        mediaFileRepository.delete(file);
+    }
 }
