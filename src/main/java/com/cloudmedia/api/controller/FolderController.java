@@ -1,7 +1,9 @@
 package com.cloudmedia.api.controller;
 
 import com.cloudmedia.api.entity.Folder;
+import com.cloudmedia.api.entity.MediaFile;
 import com.cloudmedia.api.service.FolderService;
+import com.cloudmedia.api.repository.MediaFileRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -9,6 +11,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
 import java.net.URI;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -17,9 +20,12 @@ import java.util.Map;
 public class FolderController {
 
     private final FolderService folderService;
+    private final MediaFileRepository mediaFileRepository; // [BỔ SUNG] Khai báo Repository quản lý file
 
-    public FolderController(FolderService folderService) {
+    // [CẬP NHẬT] Tiêm thêm MediaFileRepository vào Constructor
+    public FolderController(FolderService folderService, MediaFileRepository mediaFileRepository) {
         this.folderService = folderService;
+        this.mediaFileRepository = mediaFileRepository;
     }
 
     private String getCurrentUserId() {
@@ -56,12 +62,27 @@ public class FolderController {
         return ResponseEntity.ok(folders);
     }
 
-    // [GET] /api/folders/{folderId} - Lấy chi tiết 1 thư mục (Status: 200 OK hoặc 404)
+    // ==========================================
+    // [GET] /api/folders/{folderId} - ĐÃ ĐƯỢC NÂNG CẤP
+    // ==========================================
     @GetMapping("/{folderId}")
     public ResponseEntity<?> getFolderById(@PathVariable String folderId) {
         try {
-            Folder folder = folderService.getFolderById(folderId, getCurrentUserId());
-            return ResponseEntity.ok(folder);
+            String userId = getCurrentUserId();
+            
+            // 1. Lấy thông tin chi tiết của Thư mục
+            Folder folder = folderService.getFolderById(folderId, userId);
+
+            // 2. Lấy toàn bộ File nằm trong Thư mục này
+            List<MediaFile> files = mediaFileRepository.findByFolderIdAndUserId(folderId, userId);
+
+            // 3. Đóng gói cả Thư mục và Danh sách File vào một JSON duy nhất
+            Map<String, Object> response = new HashMap<>();
+            response.put("folderInfo", folder);
+            response.put("files", files);
+
+            return ResponseEntity.ok(response);
+            
         } catch (RuntimeException e) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", e.getMessage()));
         }

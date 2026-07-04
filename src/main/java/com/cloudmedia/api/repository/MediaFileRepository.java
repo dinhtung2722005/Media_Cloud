@@ -10,7 +10,7 @@ import java.util.List;
 public interface MediaFileRepository extends JpaRepository<MediaFile, String> {
     // Lấy danh sách file trong một thư mục cụ thể của người dùng
     List<MediaFile> findByUserIdAndFolderId(String userId, String folderId);
-    
+    List<MediaFile> findByFolderIdAndUserId(String folderId, String userId);
     // Lấy danh sách file nằm ở thư mục gốc
     List<MediaFile> findByUserIdAndFolderIdIsNull(String userId);
 }
