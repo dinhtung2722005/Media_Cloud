@@ -4,6 +4,7 @@ import com.cloudmedia.api.entity.MediaFile;
 import com.cloudmedia.api.repository.MediaFileRepository;
 import org.jobrunr.jobs.annotations.Job;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 
 import java.io.BufferedReader;
@@ -14,20 +15,22 @@ import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
-import com.cloudmedia.api.repository.FolderRepository; // IMPORT THÊM
+import com.cloudmedia.api.repository.FolderRepository;
+import java.util.Map;
 
 @Service
 public class MediaEngineService {
 
     private final MediaFileRepository mediaFileRepository;
     private final FolderRepository folderRepository;
-
+    private final SimpMessagingTemplate messagingTemplate;
     @Value("${app.storage.base-dir}")
     private String baseStorageDir;
 
-    public MediaEngineService(MediaFileRepository mediaFileRepository, FolderRepository folderRepository) {
+    public MediaEngineService(MediaFileRepository mediaFileRepository,  FolderRepository folderRepository, SimpMessagingTemplate messagingTemplate) {
         this.mediaFileRepository = mediaFileRepository;
         this.folderRepository = folderRepository;
+        this.messagingTemplate = messagingTemplate;
     }
 
     /**
@@ -119,6 +122,14 @@ public class MediaEngineService {
                 while ((line = reader.readLine()) != null) {
                     if (line.contains("%")) {
                          System.out.println("yt-dlp Log: " + line);
+                         messagingTemplate.convertAndSend(
+                            "/topic/progress/" + userId, 
+                            Map.of(
+                                "jobType", "YOUTUBE_DOWNLOAD",
+                                "status", "PROCESSING",
+                                "progressLine", line // Dòng log chứa tiến độ (VD: "  45.0% of 50MiB...")
+                            )
+                        );
                     }
                 }
             }
@@ -143,11 +154,27 @@ public class MediaEngineService {
 
                 mediaFileRepository.save(mediaFile);
                 System.out.println("Tải thành công và đã ánh xạ video vào thư mục của User: " + userId);
+                messagingTemplate.convertAndSend(
+                    "/topic/progress/" + userId, 
+                    Map.of(
+                        "jobType", "YOUTUBE_DOWNLOAD",
+                        "status", "COMPLETED",
+                        "fileId", physicalFileId
+                    )
+                );
                 
             } else {
                 throw new RuntimeException("yt-dlp tải thất bại! Mã lỗi: " + exitCode);
             }
         } catch (Exception e) {
+            messagingTemplate.convertAndSend(
+                "/topic/progress/" + userId, 
+                Map.of(
+                    "jobType", "YOUTUBE_DOWNLOAD",
+                    "status", "FAILED",
+                    "message", e.getMessage()
+                )
+            );
             throw new RuntimeException("Lỗi tiến trình ngầm: " + e.getMessage());
         }
     }
