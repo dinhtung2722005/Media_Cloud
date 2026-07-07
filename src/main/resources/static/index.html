@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cloud Media Drive</title>
+    <!-- Import Bootstrap 5 cho giao diện đẹp -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background-color: #f8f9fa; }
+        .hidden { display: none !important; }
+        #app-container { margin-top: 20px; }
+    </style>
+</head>
+<body>
+
+    <!-- 1. MÀN HÌNH ĐĂNG NHẬP / ĐĂNG KÝ -->
+    <div id="auth-container" class="container mt-5">
+        <div class="row justify-content-center">
+            <div class="col-md-5">
+                <div class="card shadow">
+                    <div class="card-body">
+                        <h3 class="text-center mb-4 text-primary">☁️ Cloud Media</h3>
+                        
+                        <div class="mb-3">
+                            <label>Tên đăng nhập</label>
+                            <input type="text" id="username" class="form-control" placeholder="Nhập username">
+                        </div>
+                        <div class="mb-3">
+                            <label>Mật khẩu</label>
+                            <input type="password" id="password" class="form-control" placeholder="Nhập mật khẩu">
+                        </div>
+                        
+                        <div class="d-grid gap-2">
+                            <button id="btnLogin" class="btn btn-primary">Đăng nhập</button>
+                            <button id="btnRegister" class="btn btn-outline-secondary">Đăng ký mới</button>
+                        </div>
+                        <div id="auth-message" class="text-danger text-center mt-3"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 2. MÀN HÌNH CHÍNH CỦA ỨNG DỤNG (Bị ẩn đi cho đến khi đăng nhập thành công) -->
+    <div id="app-container" class="container hidden">
+        <div class="d-flex justify-content-between align-items-center mb-4 border-bottom pb-2">
+            <h2>☁️ My Drive</h2>
+            <div>
+                <span id="welcome-text" class="me-3 fw-bold text-primary"></span>
+                <button id="btnLogout" class="btn btn-outline-danger btn-sm">Đăng xuất</button>
+            </div>
+        </div>
+        
+        <div class="d-flex justify-content-between mb-3">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb mb-0" id="breadcrumb">
+                    <li class="breadcrumb-item"><a href="#" onclick="loadFolder(null)">🏠 Thư mục gốc</a></li>
+                    </ol>
+            </nav>
+            <div>
+                <button class="btn btn-success btn-sm me-2" id="btnCreateFolder">📁 Tạo thư mục</button>
+                <button class="btn btn-primary btn-sm" id="btnUploadFile">📤 Tải file lên</button>
+            </div>
+        </div>
+
+        <div id="media-list" class="row g-3">
+            </div>
+    </div>
+
+    <!-- Import logic Javascript -->
+    <script src="app.js"></script>
+</body>
+</html>

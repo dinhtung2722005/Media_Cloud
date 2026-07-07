@@ -118,7 +118,6 @@ public class FileService {
         mediaFileRepository.delete(mediaFile);
     }
 
-    // --- LỚP BỌC DỮ LIỆU ĐỂ TRẢ VỀ CHO CONTROLLER ---
     public static class FileResourceWrapper {
         private final Resource resource;
         private final String mimeType;
