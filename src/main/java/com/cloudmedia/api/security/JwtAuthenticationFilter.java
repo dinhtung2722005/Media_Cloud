@@ -1,6 +1,8 @@
 package com.cloudmedia.api.security;
+
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
+import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -8,6 +10,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
+
 import java.io.IOException;
 import java.util.ArrayList;
 
@@ -24,7 +27,9 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
             throws ServletException, IOException {
         try {
-            String jwt = parseJwt(request);
+            // ĐÃ SỬA: Gọi đúng hàm getJwtFromRequest để bóc Token từ Cookie
+            String jwt = getJwtFromRequest(request);
+            
             if (jwt != null && jwtUtils.validateJwtToken(jwt)) {
                 // Bóc tách UserId trực tiếp từ Token để ngăn chặn IDOR
                 String userId = jwtUtils.getUserIdFromJwtToken(jwt);
@@ -41,11 +46,23 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         filterChain.doFilter(request, response);
     }
 
-    private String parseJwt(HttpServletRequest request) {
-        String headerAuth = request.getHeader("Authorization");
-        if (StringUtils.hasText(headerAuth) && headerAuth.startsWith("Bearer ")) {
-            return headerAuth.substring(7);
+    // HÀM DUY NHẤT LÀM NHIỆM VỤ TÌM TOKEN (Ưu tiên Cookie trước, Header sau)
+    private String getJwtFromRequest(HttpServletRequest request) {
+        // 1. Tìm trong Cookie
+        if (request.getCookies() != null) {
+            for (Cookie cookie : request.getCookies()) {
+                if ("jwt_token".equals(cookie.getName())) {
+                    return cookie.getValue();
+                }
+            }
         }
+
+        // 2. Tìm trong Header (Dùng cho Postman)
+        String bearerToken = request.getHeader("Authorization");
+        if (StringUtils.hasText(bearerToken) && bearerToken.startsWith("Bearer ")) {
+            return bearerToken.substring(7);
+        }
+
         return null;
     }
 }
