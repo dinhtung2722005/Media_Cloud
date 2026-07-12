@@ -63,6 +63,7 @@ public class AuthController {
             return ResponseEntity.ok()
                     .header(HttpHeaders.SET_COOKIE, springCookie.toString())
                     .body(Map.of(
+                            "access_token", token,
                             "message", "Đăng nhập thành công!",
                             "username", username
                     ));

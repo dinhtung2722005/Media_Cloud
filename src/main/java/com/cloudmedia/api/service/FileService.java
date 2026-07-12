@@ -117,7 +117,18 @@ public class FileService {
         // Xóa dòng thông tin trong DB
         mediaFileRepository.delete(mediaFile);
     }
+    public void renameFile(String fileId, String newTitle, String userId) {
+        Optional<MediaFile> fileOptional = mediaFileRepository.findById(fileId);
+        if (fileOptional.isEmpty() || !fileOptional.get().getUserId().equals(userId)) {
+            throw new RuntimeException("File không tồn tại hoặc bạn không có quyền đổi tên!");
+        }
 
+        MediaFile mediaFile = fileOptional.get();
+     
+        mediaFile.setTitle(newTitle); 
+        
+        mediaFileRepository.save(mediaFile);
+    }
     public static class FileResourceWrapper {
         private final Resource resource;
         private final String mimeType;
