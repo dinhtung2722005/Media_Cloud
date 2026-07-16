@@ -13,7 +13,7 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     @Override
     public void registerStompEndpoints(StompEndpointRegistry registry) {
         // Frontend sẽ kết nối vào đường dẫn này để mở ống nước (kết nối mạng)
-        registry.addEndpoint("/ws/media")
+        registry.addEndpoint("/ws/")
                 .setAllowedOriginPatterns("*") // Cho phép mọi domain kết nối (sau này có thể chặn lại cho an toàn)
                 .withSockJS(); // Fallback an toàn nếu trình duyệt cũ không hỗ trợ chuẩn WebSocket
     }

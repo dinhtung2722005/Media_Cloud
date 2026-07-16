@@ -26,7 +26,7 @@ public class SecurityConfig {
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
                 // Mở cửa cho các API xác thực ban đầu
-                .requestMatchers("/api/auth/**").permitAll()
+                .requestMatchers("/api/auth/**","/ws/**").permitAll()
                 .requestMatchers("/", "/index.html", "/app.js", "/css/**", "/js/**", "/ws/**").permitAll()
                 // Tất cả các API quản lý thư mục, file đều phải được xác thực
                 .anyRequest().authenticated()

@@ -6,10 +6,12 @@ const appContainer = document.getElementById('app-container');
 const authMessage = document.getElementById('auth-message');
 const welcomeText = document.getElementById('welcome-text');
 const mediaList = document.getElementById('media-list');
-
+const loginSection = document.getElementById('login-section');
+const registerSection = document.getElementById('register-section');
+const btnUploadDropdown = document.getElementById('btnUploadDropdown');
 let currentUsername = localStorage.getItem('username');
 let currentFolderId = null;
-
+let stompClient = null;
 // Khởi tạo thẻ file ẩn duy nhất 1 lần
 const fileInput = document.createElement('input');
 fileInput.type = 'file';
@@ -27,9 +29,126 @@ function showMainApp() {
     authContainer.classList.add('hidden');
     appContainer.classList.remove('hidden');
     welcomeText.innerText = "Xin chào, " + currentUsername;
+    connectWebSocket(currentUsername);
     loadFolder(null); 
 }
+function connectWebSocket(username) {
+    // 1. Tạo kết nối SockJS đến endpoint /ws ở Backend
+    const socket = new SockJS('/ws');
+    stompClient = Stomp.over(socket);
+    
+    // Tắt log rác debug của STOMP trên Console
+    stompClient.debug = null;
 
+    stompClient.connect({}, function (frame) {
+        console.log('WebSocket kết nối thành công cho: ' + username);
+
+        // 2. Lắng nghe kênh thông báo tiến trình của riêng Username này
+        stompClient.subscribe('/topic/progress/global', function (response) {
+            const data = JSON.parse(response.body);
+            handleRealtimeProgress(data);
+        });
+    }, function (error) {
+        console.warn('Lỗi kết nối WebSocket, sẽ thử lại sau 5 giây...', error);
+        setTimeout(() => connectWebSocket(username), 5000); // Tự động kết nối lại
+    });
+}
+
+function disconnectWebSocket() {
+    if (stompClient !== null) {
+        stompClient.disconnect();
+        stompClient = null;
+    }
+    console.log("Đã ngắt kết nối WebSocket");
+}
+
+// ==========================================
+// XỬ LÝ TIẾN TRÌNH & THÔNG BÁO REALTIME (ĐÃ CÓ REGEX)
+// ==========================================
+function handleRealtimeProgress(data) {
+    console.log("TÍN HIỆU WEBSOCKET NHẬN ĐƯỢC:", data);
+    const progressContainer = document.getElementById('progress-container');
+    const progressList = document.getElementById('progress-list');
+    if (!progressContainer || !progressList) return;
+
+    progressContainer.classList.remove('hidden');
+
+    let taskId = data.taskId || (data.jobType === 'YOUTUBE_DOWNLOAD' ? 'yt-dlp-task' : 'default-task');
+    let taskName = data.taskName || (data.jobType === 'YOUTUBE_DOWNLOAD' ? 'Tải video YouTube' : 'Đang xử lý...');
+    let progress = data.progress || 0;
+    let status = data.status;
+
+    // Bóc tách con số phần trăm từ log của yt-dlp
+    if (data.progressLine) {
+        const match = data.progressLine.match(/([\d.]+)%/);
+        if (match && match[1]) {
+            progress = Math.round(parseFloat(match[1]));
+        } else {
+            return; // Nếu không có %, bỏ qua để thanh không giật lùi
+        }
+    }
+
+    let taskRow = document.getElementById(`task-${taskId}`);
+
+    if (!taskRow) {
+        taskRow = document.createElement('div');
+        taskRow.id = `task-${taskId}`;
+        taskRow.className = 'col-12 p-2 border rounded bg-white shadow-sm mb-2 animate__animated animate__fadeIn';
+        taskRow.innerHTML = `
+            <div class="d-flex justify-content-between mb-1 small">
+                <span class="fw-bold text-truncate" style="max-width: 80%;" id="task-name-${taskId}">${taskName}</span>
+                <span class="text-primary fw-bold" id="task-pct-${taskId}">${progress}%</span>
+            </div>
+            <div class="progress" style="height: 8px;">
+                <div class="progress-bar progress-bar-striped progress-bar-animated bg-primary" id="task-bar-${taskId}" role="progressbar" style="width: ${progress}%"></div>
+            </div>`;
+        progressList.appendChild(taskRow);
+    } else {
+        document.getElementById(`task-pct-${taskId}`).innerText = `${progress}%`;
+        document.getElementById(`task-bar-${taskId}`).style.width = `${progress}%`;
+    }
+
+    if (status === 'COMPLETED') {
+        const bar = document.getElementById(`task-bar-${taskId}`);
+        if(bar) bar.className = 'progress-bar bg-success'; 
+        const pct = document.getElementById(`task-pct-${taskId}`);
+        if(pct) pct.innerText = 'Xong!';
+        
+        showToast(`✅ ${taskName} thành công!`, 'bg-success');
+        
+        setTimeout(() => {
+            if(taskRow) taskRow.remove();
+            if (progressList.children.length === 0) progressContainer.classList.add('hidden');
+        }, 3000);
+
+        loadFolder(currentFolderId);
+
+    } else if (status === 'FAILED') {
+        const bar = document.getElementById(`task-bar-${taskId}`);
+        if(bar) bar.className = 'progress-bar bg-danger';
+        const pct = document.getElementById(`task-pct-${taskId}`);
+        if(pct) pct.innerText = 'Lỗi!';
+        
+        showToast(`❌ Lỗi: ${data.message || 'Tác vụ thất bại!'}`, 'bg-danger');
+
+        setTimeout(() => {
+            if(taskRow) taskRow.remove();
+            if (progressList.children.length === 0) progressContainer.classList.add('hidden');
+        }, 5000);
+    }
+}
+
+function showToast(message, bgClass = 'bg-success') {
+    const toastEl = document.getElementById('realtimeToast');
+    const toastMsg = document.getElementById('toast-message');
+    if (!toastEl || !toastMsg) return;
+
+    toastEl.className = `toast align-items-center border-0 text-white ${bgClass}`;
+    toastMsg.innerText = message;
+
+    const toast = new bootstrap.Toast(toastEl);
+    toast.show();
+}
 async function loadFolder(folderId) {
     currentFolderId = folderId;
     mediaList.innerHTML = '<div class="col-12 text-center text-muted py-5">Đang tải dữ liệu...</div>';
@@ -248,10 +367,36 @@ async function renameFile(fileId, currentName, event) {
 // ==========================================
 // 4. LẮNG NGHE SỰ KIỆN GIAO DIỆN (ĐĂNG KÝ 1 LẦN DUY NHẤT)
 // ==========================================
+document.getElementById('linkToRegister')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    loginSection.classList.add('hidden');
+    registerSection.classList.remove('hidden');
+    authMessage.innerText = ''; // Xóa thông báo cũ
+});
+
+document.getElementById('linkToLogin')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    registerSection.classList.add('hidden');
+    loginSection.classList.remove('hidden');
+    authMessage.innerText = '';
+});
+
+// ==========================================
+// LOGIC ĐĂNG NHẬP
+// ==========================================
 document.getElementById('btnLogin')?.addEventListener('click', async () => {
-    const user = document.getElementById('username').value;
-    const pass = document.getElementById('password').value;
+    const user = document.getElementById('login-username').value;
+    const pass = document.getElementById('login-password').value;
+    
+    if (!user || !pass) {
+        authMessage.innerText = "Vui lòng nhập đủ thông tin!";
+        authMessage.className = "text-danger mt-3 fw-bold text-center";
+        return;
+    }
+
     authMessage.innerText = "Đang kết nối...";
+    authMessage.className = "text-info mt-3 fw-bold text-center";
+
     try {
         const response = await fetch('/api/auth/login', {
             method: 'POST',
@@ -260,27 +405,102 @@ document.getElementById('btnLogin')?.addEventListener('click', async () => {
             credentials: 'include'
         });
         const data = await response.json();
+        
         if (response.ok) {
             localStorage.setItem('username', user);
             currentUsername = user;
             showMainApp();
         } else {
             authMessage.innerText = data.error || data.message || "Sai tài khoản/mật khẩu!";
+            authMessage.className = "text-danger mt-3 fw-bold text-center";
         }
-    } catch (error) { authMessage.innerText = "Lỗi kết nối!"; }
+    } catch (error) { 
+        authMessage.innerText = "Lỗi kết nối máy chủ!"; 
+        authMessage.className = "text-danger mt-3 fw-bold text-center";
+    }
 });
 
+// ==========================================
+// LOGIC ĐĂNG KÝ CHUẨN
+// ==========================================
+document.getElementById('btnSubmitRegister')?.addEventListener('click', async () => {
+    const user = document.getElementById('reg-username').value;
+    const pass = document.getElementById('reg-password').value;
+    const confirmPass = document.getElementById('reg-confirm-password').value;
+    
+    // 1. Kiểm tra bỏ trống
+    if (!user || !pass || !confirmPass) {
+        authMessage.innerText = "Vui lòng điền đầy đủ các ô!";
+        authMessage.className = "text-danger mt-3 fw-bold text-center";
+        return;
+    }
+
+    // 2. Kiểm tra mật khẩu khớp nhau
+    if (pass !== confirmPass) {
+        authMessage.innerText = "Mật khẩu xác nhận không khớp!";
+        authMessage.className = "text-danger mt-3 fw-bold text-center";
+        return;
+    }
+
+    authMessage.innerText = "Đang tạo tài khoản...";
+    authMessage.className = "text-info mt-3 fw-bold text-center";
+
+    try {
+        const response = await fetch('/api/auth/register', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: user.trim(), password: pass.trim() })
+        });
+        const data = await response.json();
+
+        if (response.ok) {
+            authMessage.innerText = "Đăng ký thành công! Đang chuyển về Đăng nhập...";
+            authMessage.className = "text-success mt-3 fw-bold text-center";
+            
+            // Xóa rỗng các ô nhập liệu
+            document.getElementById('reg-username').value = '';
+            document.getElementById('reg-password').value = '';
+            document.getElementById('reg-confirm-password').value = '';
+
+            // Tự động đá về màn hình đăng nhập sau 1.5 giây
+            setTimeout(() => {
+                document.getElementById('linkToLogin').click();
+            }, 1500);
+
+        } else {
+            authMessage.innerText = data.error || data.message || "Tên đăng nhập đã tồn tại!";
+            authMessage.className = "text-danger mt-3 fw-bold text-center";
+        }
+    } catch (error) {
+        authMessage.innerText = "Lỗi kết nối đến máy chủ!";
+        authMessage.className = "text-danger mt-3 fw-bold text-center";
+    }
+});
 document.getElementById('btnLogout')?.addEventListener('click', async () => {
-    await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
+    // 1. Ngắt kết nối WebSocket
+    disconnectWebSocket();
+    
+    // 2. Gọi API Đăng xuất (bỏ qua lỗi nếu Server đã sập)
+    try {
+        await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
+    } catch(e) {}
+    
+    // 3. Xóa bộ nhớ đệm
     localStorage.removeItem('username');
     currentUsername = null;
+    
+    // 4. Chuyển đổi giao diện
     appContainer.classList.add('hidden');
     authContainer.classList.remove('hidden');
-    document.getElementById('username').value = '';
-    document.getElementById('password').value = '';
+    
+    // 5. [ĐÃ SỬA LỖI] Xóa rỗng các ô nhập liệu bằng ID mới
+    const loginUserEl = document.getElementById('login-username');
+    const loginPassEl = document.getElementById('login-password');
+    if (loginUserEl) loginUserEl.value = '';
+    if (loginPassEl) loginPassEl.value = '';
+    
     authMessage.innerText = ''; 
 });
-
 const btnCreateFolder = document.getElementById('btnCreateFolder');
 if (btnCreateFolder) {
     btnCreateFolder.addEventListener('click', async () => {
@@ -352,27 +572,70 @@ if (btnUploadYoutube) {
     });
 }
 
-fileInput.addEventListener('change', async (event) => {
+fileInput.addEventListener('change', (event) => {
     const file = event.target.files[0];
     if (!file) return;
 
-    const originalText = btnUpload.innerHTML;
-    btnUpload.innerHTML = '⏳ Đang tải...';
-    btnUpload.disabled = true;
+    // Khóa nút upload tạm thời
+    const originalText = btnUploadDropdown.innerHTML;
+    btnUploadDropdown.innerHTML = '⏳ Đang tải...';
+    btnUploadDropdown.disabled = true;
 
     const formData = new FormData();
     formData.append('file', file);
     if (currentFolderId) formData.append('folderId', currentFolderId);
 
-    try {
-        const response = await fetch('/api/files/upload', { method: 'POST', body: formData, credentials: 'include' });
-        if (response.ok) loadFolder(currentFolderId); 
-        else alert("Lỗi tải lên!");
-    } catch (error) {
-        alert("Lỗi mạng khi kết nối!");
-    } finally {
-        btnUpload.innerHTML = originalText;
-        btnUpload.disabled = false;
-        fileInput.value = ''; 
-    }
+    // Tạo ID giả lập cho tiến trình để vẽ lên UI
+    const taskId = 'upload-' + Date.now();
+    const taskName = "Đang tải tệp: " + file.name;
+
+    // Dùng XMLHttpRequest (XHR) thay cho fetch để bắt được tiến trình upload mạng
+    const xhr = new XMLHttpRequest();
+    
+    // Gắn cookie bảo mật
+    xhr.withCredentials = true; 
+
+    // Bắt sự kiện đang tải (Cập nhật phần trăm)
+    xhr.upload.addEventListener('progress', (e) => {
+        if (e.lengthComputable) {
+            const percentComplete = Math.round((e.loaded / e.total) * 100);
+            
+            // Gọi lại hàm vẽ tiến trình ta đã viết ở bước WebSocket
+            handleRealtimeProgress({
+                taskId: taskId,
+                taskName: taskName,
+                progress: percentComplete,
+                status: 'PROCESSING'
+            });
+        }
+    });
+
+    // Bắt sự kiện tải xong
+    xhr.addEventListener('load', () => {
+        if (xhr.status === 201 || xhr.status === 200) {
+            // Ép lên 100% và báo thành công
+            handleRealtimeProgress({ taskId: taskId, taskName: taskName, progress: 100, status: 'COMPLETED' });
+        } else {
+            handleRealtimeProgress({ taskId: taskId, taskName: taskName, progress: 0, status: 'FAILED' });
+            alert("Lỗi máy chủ khi lưu file!");
+        }
+        
+        // Mở khóa nút
+        btnUploadDropdown.innerHTML = originalText;
+        btnUploadDropdown.disabled = false;
+        fileInput.value = '';
+    });
+
+    // Bắt sự kiện rớt mạng
+    xhr.addEventListener('error', () => {
+        handleRealtimeProgress({ taskId: taskId, taskName: taskName, progress: 0, status: 'FAILED' });
+        btnUploadDropdown.innerHTML = originalText;
+        btnUploadDropdown.disabled = false;
+        fileInput.value = '';
+        alert("Lỗi mạng, mất kết nối đến máy chủ!");
+    });
+
+    // Bắt đầu gửi đi
+    xhr.open('POST', '/api/files/upload', true);
+    xhr.send(formData);
 });

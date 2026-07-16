@@ -9,7 +9,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.Map;
 
 @RestController
-@RequestMapping("/api/youtube")
+@RequestMapping("/api/files") 
 public class YouTubeController {
 
     private final JobScheduler jobScheduler;
@@ -20,24 +20,28 @@ public class YouTubeController {
         this.mediaEngineService = mediaEngineService;
     }
 
-    // Hàm bắt buộc phải có để lấy ID người dùng từ Token (Chống IDOR)
     private String getCurrentUserId() {
         return (String) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
     }
 
-    @PostMapping("/fetch")
+    @PostMapping("/youtube")
     public ResponseEntity<?> fetchYouTubeVideo(@RequestBody Map<String, String> request) {
         try {
             String videoUrl = request.get("url");
-            
-            // Lấy folderId từ request (nếu không truyền lên thì mặc định là chuỗi rỗng)
             String folderId = request.getOrDefault("folderId", ""); 
             
-            // Lấy userId của người đang gọi API
+            if (videoUrl == null || videoUrl.trim().isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of("error", "Link YouTube không được để trống!"));
+            }
+            
+            // Lấy ID và Username của người đang gọi API
             String userId = getCurrentUserId();
+            String currentUsername = SecurityContextHolder.getContext().getAuthentication().getName();
 
-            // Truyền ĐẦY ĐỦ 3 tham số (url, userId, folderId) xuống Background Worker
-            jobScheduler.enqueue(() -> mediaEngineService.downloadYouTubeVideo(videoUrl, userId, folderId));
+            // Truyền ĐẦY ĐỦ 4 tham số xuống Background Worker để WebSocket hoạt động
+            jobScheduler.enqueue(() -> 
+                mediaEngineService.downloadYouTubeVideo(videoUrl, userId, folderId, currentUsername)
+            );
 
             return ResponseEntity.accepted().body(Map.of(
                     "message", "Yêu cầu tải video đã được đưa vào hàng đợi xử lý ngầm!",
