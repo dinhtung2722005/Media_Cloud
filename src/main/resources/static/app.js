@@ -22,9 +22,7 @@ if (currentUsername) {
     showMainApp();
 }
 
-// ==========================================
-// 2. CÁC HÀM XỬ LÝ LOGIC GIAO DIỆN
-// ==========================================
+
 function showMainApp() {
     authContainer.classList.add('hidden');
     appContainer.classList.remove('hidden');
@@ -62,9 +60,7 @@ function disconnectWebSocket() {
     console.log("Đã ngắt kết nối WebSocket");
 }
 
-// ==========================================
-// XỬ LÝ TIẾN TRÌNH & THÔNG BÁO REALTIME (ĐÃ CÓ REGEX)
-// ==========================================
+
 function handleRealtimeProgress(data) {
     console.log("TÍN HIỆU WEBSOCKET NHẬN ĐƯỢC:", data);
     const progressContainer = document.getElementById('progress-container');
@@ -274,9 +270,7 @@ function renderMedia(data, isInsideFolder) {
         mediaList.appendChild(div);
     });
 }
-// ==========================================
-// 3. LOGIC THAO TÁC CRUD (XÓA, ĐỔI TÊN)
-// ==========================================
+
 async function deleteFolder(folderId, event) {
     event.stopPropagation(); 
     if (!confirm("Bạn có chắc chắn muốn xóa thư mục này và TOÀN BỘ file bên trong không?")) return;
@@ -364,9 +358,7 @@ async function renameFile(fileId, currentName, event) {
     } catch (error) { alert("Lỗi kết nối máy chủ!"); }
 }
 
-// ==========================================
-// 4. LẮNG NGHE SỰ KIỆN GIAO DIỆN (ĐĂNG KÝ 1 LẦN DUY NHẤT)
-// ==========================================
+
 document.getElementById('linkToRegister')?.addEventListener('click', (e) => {
     e.preventDefault();
     loginSection.classList.add('hidden');
@@ -381,9 +373,7 @@ document.getElementById('linkToLogin')?.addEventListener('click', (e) => {
     authMessage.innerText = '';
 });
 
-// ==========================================
-// LOGIC ĐĂNG NHẬP
-// ==========================================
+
 document.getElementById('btnLogin')?.addEventListener('click', async () => {
     const user = document.getElementById('login-username').value;
     const pass = document.getElementById('login-password').value;
@@ -420,9 +410,6 @@ document.getElementById('btnLogin')?.addEventListener('click', async () => {
     }
 });
 
-// ==========================================
-// LOGIC ĐĂNG KÝ CHUẨN
-// ==========================================
 document.getElementById('btnSubmitRegister')?.addEventListener('click', async () => {
     const user = document.getElementById('reg-username').value;
     const pass = document.getElementById('reg-password').value;
