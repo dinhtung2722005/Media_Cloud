@@ -1,13 +1,18 @@
 package com.cloudmedia.api.security;
-import com.cloudmedia.api.entity.User;
-import io.jsonwebtoken.*;
-import io.jsonwebtoken.io.Decoders;
-import io.jsonwebtoken.security.Keys;
+import java.security.Key;
+import java.util.Date;
+
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
-import java.security.Key;
-import java.util.Date;
+import com.cloudmedia.api.entity.User;
+
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.JwtException;
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.SignatureAlgorithm;
+import io.jsonwebtoken.io.Decoders;
+import io.jsonwebtoken.security.Keys;
 
 @Component
 public class JwtUtils {
@@ -56,4 +61,12 @@ public class JwtUtils {
         }
         return false;
     }
+    public Date getExpirationDateFromJwtToken(String token) {
+        return Jwts.parserBuilder()
+                .setSigningKey(getSigningKey()) // Lưu ý: Dùng đúng hàm hoặc biến chứa Secret Key của bạn ở đây
+                .build()
+                .parseClaimsJws(token)
+                .getBody()
+                .getExpiration();
+}
 }

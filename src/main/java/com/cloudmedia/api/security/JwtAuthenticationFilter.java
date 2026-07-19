@@ -10,7 +10,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
-
+import com.cloudmedia.api.repository.RevokedTokenRepository;
 import java.io.IOException;
 import java.util.ArrayList;
 
@@ -18,8 +18,9 @@ import java.util.ArrayList;
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtUtils jwtUtils;
-
-    public JwtAuthenticationFilter(JwtUtils jwtUtils) {
+    private final RevokedTokenRepository revokedTokenRepository;
+    public JwtAuthenticationFilter(JwtUtils jwtUtils,RevokedTokenRepository revokedTokenRepository) {
+        this.revokedTokenRepository = revokedTokenRepository;
         this.jwtUtils = jwtUtils;
     }
 
@@ -31,6 +32,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             String jwt = getJwtFromRequest(request);
             
             if (jwt != null && jwtUtils.validateJwtToken(jwt)) {
+                if (revokedTokenRepository.existsByToken(jwt)) {
+                    System.out.println("CẢNH BÁO: Phát hiện Token đã bị thu hồi cố gắng truy cập!");
+                    response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "Token đã bị thu hồi!");
+                    return; // Chặn đứng luôn, không cho đi tiếp
+                }
                 // Bóc tách UserId trực tiếp từ Token để ngăn chặn IDOR
                 String userId = jwtUtils.getUserIdFromJwtToken(jwt);
 

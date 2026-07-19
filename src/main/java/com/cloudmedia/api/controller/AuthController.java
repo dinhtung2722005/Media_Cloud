@@ -1,9 +1,13 @@
 package com.cloudmedia.api.controller;
 
+import com.cloudmedia.api.entity.RevokedToken;
 import com.cloudmedia.api.entity.User;
 import com.cloudmedia.api.repository.UserRepository;
 import com.cloudmedia.api.security.JwtUtils;
 import com.cloudmedia.api.service.UserService;
+import com.cloudmedia.api.repository.RevokedTokenRepository;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.Cookie;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
@@ -21,9 +25,10 @@ public class AuthController {
     private final UserRepository userRepository;
     private final JwtUtils jwtUtils;
     private final PasswordEncoder passwordEncoder;
-
-    public AuthController(UserService userService, UserRepository userRepository, JwtUtils jwtUtils) {
+    private final RevokedTokenRepository revokedTokenRepository;
+    public AuthController(UserService userService, UserRepository userRepository, JwtUtils jwtUtils,RevokedTokenRepository revokedTokenRepository) {
         this.userService = userService;
+        this.revokedTokenRepository = revokedTokenRepository;
         this.userRepository = userRepository;
         this.jwtUtils = jwtUtils;
         this.passwordEncoder = new BCryptPasswordEncoder();
@@ -74,7 +79,22 @@ public class AuthController {
 
     // THÊM API ĐĂNG XUẤT ĐỂ XÓA COOKIE
     @PostMapping("/logout")
-    public ResponseEntity<?> logout() {
+    public ResponseEntity<?> logout(HttpServletRequest request) {
+        String jwt = null;
+        if (request.getCookies() != null) {
+            for (Cookie cookie : request.getCookies()) {
+                if ("jwt_cookie".equals(cookie.getName())) { // Tên cookie do bạn đặt
+                    jwt = cookie.getValue();
+                    break;
+                }
+            }
+        }
+        if (jwt != null && jwtUtils.validateJwtToken(jwt)) {
+            RevokedToken revokedToken = new RevokedToken();
+            revokedToken.setToken(jwt);
+            revokedToken.setExpirationDate(jwtUtils.getExpirationDateFromJwtToken(jwt));
+            revokedTokenRepository.save(revokedToken);
+        }
         ResponseCookie cleanCookie = ResponseCookie.from("jwt_token", "")
                 .httpOnly(true)
                 .secure(false)
