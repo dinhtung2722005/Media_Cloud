@@ -22,7 +22,44 @@ if (currentUsername) {
     showMainApp();
 }
 
+// ==========================================
+// 2. HÀM INTERCEPTOR: XỬ LÝ LÀM MỚI TOKEN NGẦM
+// ==========================================
+async function fetchWithAuth(url, options = {}) {
+    // Luôn đính kèm Cookie
+    options.credentials = 'include';
 
+    // Gọi API lần 1
+    let response = await fetch(url, options);
+
+    // Nếu Access Token hết hạn
+    if (response.status === 401) {
+        console.log("Access Token hết hạn! Đang tiến hành làm mới ngầm...");
+        
+        // Gọi API Refresh
+        const refreshResponse = await fetch('/api/auth/refresh', {
+            method: 'POST',
+            credentials: 'include'
+        });
+
+        if (refreshResponse.ok) {
+            console.log("Làm mới Token thành công! Đang gọi lại API...");
+            // Cấp lại thành công -> Gọi lại API ban đầu
+            response = await fetch(url, options);
+        } else {
+            console.error("Refresh Token hết hạn. Buộc đăng xuất.");
+            // Refresh thất bại -> Xóa cache và ép đăng xuất
+            document.getElementById('btnLogout').click();
+            alert("Phiên đăng nhập đã hết hạn dài ngày, vui lòng đăng nhập lại.");
+            return Promise.reject("Phiên đăng nhập hết hạn");
+        }
+    }
+    return response;
+}
+
+// ==========================================
+// 3. CÁC HÀM XỬ LÝ GIAO DIỆN & LOGIC CHÍNH
+// ==========================================
 function showMainApp() {
     authContainer.classList.add('hidden');
     appContainer.classList.remove('hidden');
@@ -30,25 +67,21 @@ function showMainApp() {
     connectWebSocket(currentUsername);
     loadFolder(null); 
 }
+
 function connectWebSocket(username) {
-    // 1. Tạo kết nối SockJS đến endpoint /ws ở Backend
     const socket = new SockJS('/ws');
     stompClient = Stomp.over(socket);
-    
-    // Tắt log rác debug của STOMP trên Console
     stompClient.debug = null;
 
     stompClient.connect({}, function (frame) {
         console.log('WebSocket kết nối thành công cho: ' + username);
-
-        // 2. Lắng nghe kênh thông báo tiến trình của riêng Username này
         stompClient.subscribe('/topic/progress/global', function (response) {
             const data = JSON.parse(response.body);
             handleRealtimeProgress(data);
         });
     }, function (error) {
-        console.warn('Lỗi kết nối WebSocket, sẽ thử lại sau 5 giây...', error);
-        setTimeout(() => connectWebSocket(username), 5000); // Tự động kết nối lại
+        console.warn('Lỗi kết nối WebSocket, thử lại sau 5 giây...', error);
+        setTimeout(() => connectWebSocket(username), 5000);
     });
 }
 
@@ -60,9 +93,7 @@ function disconnectWebSocket() {
     console.log("Đã ngắt kết nối WebSocket");
 }
 
-
 function handleRealtimeProgress(data) {
-    console.log("TÍN HIỆU WEBSOCKET NHẬN ĐƯỢC:", data);
     const progressContainer = document.getElementById('progress-container');
     const progressList = document.getElementById('progress-list');
     if (!progressContainer || !progressList) return;
@@ -74,13 +105,12 @@ function handleRealtimeProgress(data) {
     let progress = data.progress || 0;
     let status = data.status;
 
-    // Bóc tách con số phần trăm từ log của yt-dlp
     if (data.progressLine) {
         const match = data.progressLine.match(/([\d.]+)%/);
         if (match && match[1]) {
             progress = Math.round(parseFloat(match[1]));
         } else {
-            return; // Nếu không có %, bỏ qua để thanh không giật lùi
+            return; 
         }
     }
 
@@ -145,30 +175,25 @@ function showToast(message, bgClass = 'bg-success') {
     const toast = new bootstrap.Toast(toastEl);
     toast.show();
 }
+
 async function loadFolder(folderId) {
     currentFolderId = folderId;
     mediaList.innerHTML = '<div class="col-12 text-center text-muted py-5">Đang tải dữ liệu...</div>';
     let url = folderId ? `/api/folders/${folderId}` : '/api/folders';
 
     try {
-        const response = await fetch(url, { 
-            method: 'GET',
-            credentials: 'include'
-        });
+        // Dùng fetchWithAuth thay vì fetch
+        const response = await fetchWithAuth(url, { method: 'GET' });
 
         if (response.ok) {
             const data = await response.json();
             renderMedia(data, folderId);
-        } else {
-            document.getElementById('btnLogout').click();
-            alert("Phiên đăng nhập hết hạn!");
         }
     } catch (error) {
         mediaList.innerHTML = '<div class="col-12 text-danger text-center">Lỗi mạng kết nối!</div>';
     }
 }
 
-// --- VẼ GIAO DIỆN ---
 function renderMedia(data, isInsideFolder) {
     mediaList.innerHTML = ''; 
     
@@ -188,18 +213,14 @@ function renderMedia(data, isInsideFolder) {
         return;
     }
 
-    // 1. Vẽ danh sách Thư mục
     folders.forEach(folder => {
         const safeName = folder.folderName.replace(/'/g, "\\'"); 
         const div = document.createElement('div');
         div.className = 'col-md-3 col-sm-6 mb-3';
         div.innerHTML = `
             <div class="card shadow-sm text-center p-3 position-relative animate__animated animate__fadeIn">
-                
                 <div class="dropdown position-absolute top-0 end-0 m-1">
-                    <button class="btn btn-link text-secondary p-0 border-0 fs-4 lh-1" type="button" data-bs-toggle="dropdown" aria-expanded="false" style="text-decoration: none;" onclick="event.stopPropagation();">
-                        ⋮
-                    </button>
+                    <button class="btn btn-link text-secondary p-0 border-0 fs-4 lh-1" type="button" data-bs-toggle="dropdown" aria-expanded="false" style="text-decoration: none;" onclick="event.stopPropagation();">⋮</button>
                     <ul class="dropdown-menu dropdown-menu-end shadow">
                         <li><a class="dropdown-item" href="#" onclick="renameFolder('${folder.id}', '${safeName}', event)">✏️ Sửa tên</a></li>
                         <li><a class="dropdown-item" href="#" onclick="shareItem('${folder.id}', 'folder', event)">🔗 Chia sẻ</a></li>
@@ -207,7 +228,6 @@ function renderMedia(data, isInsideFolder) {
                         <li><a class="dropdown-item text-danger" href="#" onclick="deleteFolder('${folder.id}', event)">❌ Xóa thư mục</a></li>
                     </ul>
                 </div>
-                
                 <div style="cursor: pointer;" onclick="loadFolder('${folder.id}')">
                     <h1 class="text-warning mb-0" style="font-size: 3rem;">📁</h1>
                     <p class="mb-0 text-truncate fw-bold mt-2">${folder.folderName}</p>
@@ -216,24 +236,17 @@ function renderMedia(data, isInsideFolder) {
         mediaList.appendChild(div);
     });
 
-    // 2. Vẽ danh sách File
-    // 2. Vẽ danh sách File (ĐÃ CẬP NHẬT THUMBNAIL)
     files.forEach(file => {
         const safeName = file.title.replace(/'/g, "\\'");
-        
-        // Nhận diện định dạng
         const ext = (file.extension || '').toLowerCase();
         const isVideo = ['mp4', 'webm', 'ogg', 'mov'].includes(ext);
         const isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext);
 
-        // Xử lý khối hiển thị (Thumbnail hoặc Icon)
-        let visualContent = `<h1 class="text-primary mb-0" style="font-size: 3rem;">📄</h1>`; // Mặc định là icon Tài liệu
+        let visualContent = `<h1 class="text-primary mb-0" style="font-size: 3rem;">📄</h1>`; 
         
         if (isImage) {
-            // Nếu là ảnh -> Hiện thẳng ảnh ra
             visualContent = `<img src="/api/files/stream/${file.id}" class="rounded shadow-sm" style="width: 100%; height: 100px; object-fit: cover;" alt="img">`;
         } else if (isVideo) {
-            // Nếu là video -> Dùng thẻ video chặn ở giây thứ 1.0 (#t=1.0) để làm Thumbnail
             visualContent = `
                 <video src="/api/files/stream/${file.id}#t=1.0" class="rounded shadow-sm bg-dark" style="width: 100%; height: 100px; object-fit: cover;" preload="metadata"></video>
                 <div class="position-absolute top-50 start-50 translate-middle text-white fs-2" style="pointer-events: none; text-shadow: 0px 0px 8px rgba(0,0,0,0.8);">▶</div>
@@ -244,11 +257,8 @@ function renderMedia(data, isInsideFolder) {
         div.className = 'col-md-3 col-sm-6 mb-3';
         div.innerHTML = `
             <div class="card shadow-sm text-center p-3 position-relative animate__animated animate__fadeIn h-100 d-flex flex-column">
-                
                 <div class="dropdown position-absolute top-0 end-0 m-2 z-3">
-                    <button class="btn btn-light shadow-sm p-0 border-0 rounded-circle d-flex justify-content-center align-items-center" style="width: 28px; height: 28px; opacity: 0.9;" type="button" data-bs-toggle="dropdown" aria-expanded="false" onclick="event.stopPropagation();">
-                        ⋮
-                    </button>
+                    <button class="btn btn-light shadow-sm p-0 border-0 rounded-circle d-flex justify-content-center align-items-center" style="width: 28px; height: 28px; opacity: 0.9;" type="button" data-bs-toggle="dropdown" aria-expanded="false" onclick="event.stopPropagation();">⋮</button>
                     <ul class="dropdown-menu dropdown-menu-end shadow">
                         <li><a class="dropdown-item" href="#" onclick="renameFile('${file.id}', '${safeName}', event)">✏️ Sửa tên</a></li>
                         <li><a class="dropdown-item" href="#" onclick="shareItem('${file.id}', 'file', event)">🔗 Chia sẻ</a></li>
@@ -256,13 +266,10 @@ function renderMedia(data, isInsideFolder) {
                         <li><a class="dropdown-item text-danger" href="#" onclick="deleteFile('${file.id}', event)">❌ Xóa file</a></li>
                     </ul>
                 </div>
-                
                 <div style="cursor: pointer; position: relative;" onclick="${isVideo ? `playVideo('${file.id}', '${safeName}')` : ''}">
                     ${visualContent}
                 </div>
-                
                 <p class="mb-0 text-truncate fw-bold mt-3" title="${file.title}">${file.title}</p>
-                
                 <div class="mt-auto pt-3">
                     <a href="/api/files/download/${file.id}" class="btn btn-sm btn-outline-secondary w-100">Tải về</a>
                 </div>
@@ -271,71 +278,36 @@ function renderMedia(data, isInsideFolder) {
     });
 }
 
+// Dùng fetchWithAuth cho các thao tác Xóa, Sửa, Thêm
 async function deleteFolder(folderId, event) {
     event.stopPropagation(); 
     if (!confirm("Bạn có chắc chắn muốn xóa thư mục này và TOÀN BỘ file bên trong không?")) return;
     try {
-        const response = await fetch(`/api/folders/${folderId}`, { method: 'DELETE', credentials: 'include' });
+        const response = await fetchWithAuth(`/api/folders/${folderId}`, { method: 'DELETE' });
         if (response.ok) loadFolder(currentFolderId);
         else alert("Lỗi xóa thư mục!");
     } catch (error) { alert("Lỗi kết nối máy chủ!"); }
 }
-function playVideo(fileId, fileName) {
-    // 1. Tạo một lớp phủ đen mờ che toàn bộ trang web
-    const overlay = document.createElement('div');
-    overlay.id = 'video-player-overlay';
-    overlay.style.cssText = 'position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.9); z-index: 9999; display: flex; flex-direction: column; align-items: center; justify-content: center;';
 
-    // 2. Tạo nút Đóng
-    const closeBtn = document.createElement('button');
-    closeBtn.innerHTML = '&times; Đóng Video';
-    closeBtn.className = 'btn btn-danger mb-3';
-    closeBtn.onclick = () => document.body.removeChild(overlay); // Bấm vào thì xóa lớp phủ đi
-
-    // 3. Tiêu đề phim
-    const title = document.createElement('h4');
-    title.innerText = fileName;
-    title.className = 'text-white mb-3';
-
-    // 4. Khung phát Video (Phép thuật Cookie nằm ở đây)
-    const video = document.createElement('video');
-    // Trình duyệt sẽ tự động mang Cookie đập vào cổng /api/files/stream
-    video.src = `/api/files/stream/${fileId}`; 
-    video.controls = true; // Hiện thanh thời gian, âm lượng
-    video.autoplay = true; // Tự động chạy
-    video.style.cssText = 'max-width: 90%; max-height: 75%; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); background: black;';
-
-    // Lắp ráp mọi thứ và ném ra màn hình
-    overlay.appendChild(closeBtn);
-    overlay.appendChild(title);
-    overlay.appendChild(video);
-    document.body.appendChild(overlay);
-}
 async function deleteFile(fileId, event) {
     event.stopPropagation();
     if (!confirm("Bạn có chắc chắn muốn xóa tệp này không?")) return;
     try {
-        const response = await fetch(`/api/files/${fileId}`, { method: 'DELETE', credentials: 'include' });
+        const response = await fetchWithAuth(`/api/files/${fileId}`, { method: 'DELETE' });
         if (response.ok) loadFolder(currentFolderId);
         else alert("Lỗi xóa file!");
     } catch (error) { alert("Lỗi kết nối máy chủ!"); }
 }
-function shareItem(id, type, event) {
-    event.stopPropagation(); // Chặn sự kiện bấm nhầm mở folder/phát video
-    
-    // Tạm thời làm thông báo mẫu, sau này bạn làm API chia sẻ thì ghép vào đây nhé
-    alert(`Tính năng tạo liên kết chia sẻ cho ${type === 'folder' ? 'thư mục' : 'tệp tin'} đang được phát triển!\nID: ${id}`);
-}
+
 async function renameFolder(folderId, currentName, event) {
     event.stopPropagation();
     const newName = prompt("Đổi tên thư mục:", currentName);
     if (!newName || newName.trim() === "" || newName.trim() === currentName) return;
     try {
-        const response = await fetch(`/api/folders/${folderId}`, {
+        const response = await fetchWithAuth(`/api/folders/${folderId}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ folderName: newName.trim() }),
-            credentials: 'include'
+            body: JSON.stringify({ folderName: newName.trim() })
         });
         if (response.ok) loadFolder(currentFolderId);
         else alert("Lỗi đổi tên!");
@@ -347,23 +319,59 @@ async function renameFile(fileId, currentName, event) {
     const newName = prompt("Đổi tên tệp:", currentName);
     if (!newName || newName.trim() === "" || newName.trim() === currentName) return;
     try {
-        const response = await fetch(`/api/files/${fileId}`, {
+        const response = await fetchWithAuth(`/api/files/${fileId}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ title: newName.trim() }), 
-            credentials: 'include'
+            body: JSON.stringify({ title: newName.trim() })
         });
         if (response.ok) loadFolder(currentFolderId);
         else alert("Lỗi đổi tên tệp!");
     } catch (error) { alert("Lỗi kết nối máy chủ!"); }
 }
 
+function shareItem(id, type, event) {
+    event.stopPropagation();
+    alert(`Tính năng tạo liên kết chia sẻ cho ${type === 'folder' ? 'thư mục' : 'tệp tin'} đang được phát triển!\nID: ${id}`);
+}
 
+// Preflight Check trước khi phát video để đảm bảo Cookie còn hiệu lực
+async function playVideo(fileId, fileName) {
+    // Ping nhẹ API để làm mới Token ngầm (nếu hết hạn) trước khi mở Video
+    try { await fetchWithAuth('/api/folders', { method: 'GET' }); } catch (e) { return; }
+
+    const overlay = document.createElement('div');
+    overlay.id = 'video-player-overlay';
+    overlay.style.cssText = 'position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.9); z-index: 9999; display: flex; flex-direction: column; align-items: center; justify-content: center;';
+
+    const closeBtn = document.createElement('button');
+    closeBtn.innerHTML = '&times; Đóng Video';
+    closeBtn.className = 'btn btn-danger mb-3';
+    closeBtn.onclick = () => document.body.removeChild(overlay); 
+
+    const title = document.createElement('h4');
+    title.innerText = fileName;
+    title.className = 'text-white mb-3';
+
+    const video = document.createElement('video');
+    video.src = `/api/files/stream/${fileId}`; 
+    video.controls = true; 
+    video.autoplay = true; 
+    video.style.cssText = 'max-width: 90%; max-height: 75%; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); background: black;';
+
+    overlay.appendChild(closeBtn);
+    overlay.appendChild(title);
+    overlay.appendChild(video);
+    document.body.appendChild(overlay);
+}
+
+// ==========================================
+// 4. QUẢN LÝ TÀI KHOẢN (LOGIN/LOGOUT/REGISTER)
+// ==========================================
 document.getElementById('linkToRegister')?.addEventListener('click', (e) => {
     e.preventDefault();
     loginSection.classList.add('hidden');
     registerSection.classList.remove('hidden');
-    authMessage.innerText = ''; // Xóa thông báo cũ
+    authMessage.innerText = ''; 
 });
 
 document.getElementById('linkToLogin')?.addEventListener('click', (e) => {
@@ -372,7 +380,6 @@ document.getElementById('linkToLogin')?.addEventListener('click', (e) => {
     loginSection.classList.remove('hidden');
     authMessage.innerText = '';
 });
-
 
 document.getElementById('btnLogin')?.addEventListener('click', async () => {
     const user = document.getElementById('login-username').value;
@@ -388,6 +395,7 @@ document.getElementById('btnLogin')?.addEventListener('click', async () => {
     authMessage.className = "text-info mt-3 fw-bold text-center";
 
     try {
+        // API Login vẫn dùng fetch thường vì nó không cần Check Token
         const response = await fetch('/api/auth/login', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -415,14 +423,12 @@ document.getElementById('btnSubmitRegister')?.addEventListener('click', async ()
     const pass = document.getElementById('reg-password').value;
     const confirmPass = document.getElementById('reg-confirm-password').value;
     
-    // 1. Kiểm tra bỏ trống
     if (!user || !pass || !confirmPass) {
         authMessage.innerText = "Vui lòng điền đầy đủ các ô!";
         authMessage.className = "text-danger mt-3 fw-bold text-center";
         return;
     }
 
-    // 2. Kiểm tra mật khẩu khớp nhau
     if (pass !== confirmPass) {
         authMessage.innerText = "Mật khẩu xác nhận không khớp!";
         authMessage.className = "text-danger mt-3 fw-bold text-center";
@@ -444,16 +450,11 @@ document.getElementById('btnSubmitRegister')?.addEventListener('click', async ()
             authMessage.innerText = "Đăng ký thành công! Đang chuyển về Đăng nhập...";
             authMessage.className = "text-success mt-3 fw-bold text-center";
             
-            // Xóa rỗng các ô nhập liệu
             document.getElementById('reg-username').value = '';
             document.getElementById('reg-password').value = '';
             document.getElementById('reg-confirm-password').value = '';
 
-            // Tự động đá về màn hình đăng nhập sau 1.5 giây
-            setTimeout(() => {
-                document.getElementById('linkToLogin').click();
-            }, 1500);
-
+            setTimeout(() => { document.getElementById('linkToLogin').click(); }, 1500);
         } else {
             authMessage.innerText = data.error || data.message || "Tên đăng nhập đã tồn tại!";
             authMessage.className = "text-danger mt-3 fw-bold text-center";
@@ -463,24 +464,17 @@ document.getElementById('btnSubmitRegister')?.addEventListener('click', async ()
         authMessage.className = "text-danger mt-3 fw-bold text-center";
     }
 });
+
 document.getElementById('btnLogout')?.addEventListener('click', async () => {
-    // 1. Ngắt kết nối WebSocket
     disconnectWebSocket();
+    try { await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' }); } catch(e) {}
     
-    // 2. Gọi API Đăng xuất (bỏ qua lỗi nếu Server đã sập)
-    try {
-        await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
-    } catch(e) {}
-    
-    // 3. Xóa bộ nhớ đệm
     localStorage.removeItem('username');
     currentUsername = null;
     
-    // 4. Chuyển đổi giao diện
     appContainer.classList.add('hidden');
     authContainer.classList.remove('hidden');
     
-    // 5. [ĐÃ SỬA LỖI] Xóa rỗng các ô nhập liệu bằng ID mới
     const loginUserEl = document.getElementById('login-username');
     const loginPassEl = document.getElementById('login-password');
     if (loginUserEl) loginUserEl.value = '';
@@ -488,17 +482,20 @@ document.getElementById('btnLogout')?.addEventListener('click', async () => {
     
     authMessage.innerText = ''; 
 });
+
+// ==========================================
+// 5. UPLOAD LOGIC
+// ==========================================
 const btnCreateFolder = document.getElementById('btnCreateFolder');
 if (btnCreateFolder) {
     btnCreateFolder.addEventListener('click', async () => {
         const folderName = prompt("Vui lòng nhập tên thư mục mới:");
         if (!folderName || folderName.trim() === "") return;
         try {
-            const response = await fetch('/api/folders', {
+            const response = await fetchWithAuth('/api/folders', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ folderName: folderName.trim(), parentId: currentFolderId }),
-                credentials: 'include'
+                body: JSON.stringify({ folderName: folderName.trim(), parentId: currentFolderId })
             });
             if (response.ok) loadFolder(currentFolderId);
             else alert("Lỗi tạo thư mục!");
@@ -510,36 +507,26 @@ const btnUploadLocal = document.getElementById('btnUploadLocal');
 if (btnUploadLocal) {
     btnUploadLocal.addEventListener('click', (event) => {
         event.preventDefault();
-        fileInput.click(); // Mở hộp thoại chọn file của máy tính
+        fileInput.click(); 
     });
 }
 
-// 2. Xử lý nút "Tải từ YouTube"
 const btnUploadYoutube = document.getElementById('btnUploadYoutube');
 if (btnUploadYoutube) {
     btnUploadYoutube.addEventListener('click', async (event) => {
         event.preventDefault();
-        
-        // Bật hộp thoại nhập link YouTube
         const youtubeUrl = prompt("Vui lòng dán đường link YouTube vào đây:");
-        
         if (!youtubeUrl || youtubeUrl.trim() === "") return;
 
-        // Báo hiệu đang xử lý
         const originalText = btnUploadYoutube.innerHTML;
         btnUploadYoutube.innerHTML = '⏳ Đang xử lý...';
         btnUploadYoutube.style.pointerEvents = 'none';
 
         try {
-            // Gửi Link YouTube lên Backend xử lý
-            const response = await fetch('/api/files/youtube', {
+            const response = await fetchWithAuth('/api/files/youtube', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ 
-                    url: youtubeUrl.trim(),
-                    folderId: currentFolderId 
-                }),
-                credentials: 'include'
+                body: JSON.stringify({ url: youtubeUrl.trim(), folderId: currentFolderId })
             });
 
             if (response.ok) {
@@ -549,21 +536,19 @@ if (btnUploadYoutube) {
                 const data = await response.json();
                 alert("Lỗi: " + (data.error || "Không thể tải video này"));
             }
-        } catch (error) {
-            alert("Lỗi kết nối đến máy chủ!");
-        } finally {
-            // Khôi phục nút bấm
+        } catch (error) { alert("Lỗi kết nối đến máy chủ!"); }
+        finally {
             btnUploadYoutube.innerHTML = originalText;
             btnUploadYoutube.style.pointerEvents = 'auto';
         }
     });
 }
 
+// Xử lý XHR Upload có khả năng tự động gia hạn Token
 fileInput.addEventListener('change', (event) => {
     const file = event.target.files[0];
     if (!file) return;
 
-    // Khóa nút upload tạm thời
     const originalText = btnUploadDropdown.innerHTML;
     btnUploadDropdown.innerHTML = '⏳ Đang tải...';
     btnUploadDropdown.disabled = true;
@@ -572,57 +557,59 @@ fileInput.addEventListener('change', (event) => {
     formData.append('file', file);
     if (currentFolderId) formData.append('folderId', currentFolderId);
 
-    // Tạo ID giả lập cho tiến trình để vẽ lên UI
     const taskId = 'upload-' + Date.now();
     const taskName = "Đang tải tệp: " + file.name;
 
-    // Dùng XMLHttpRequest (XHR) thay cho fetch để bắt được tiến trình upload mạng
-    const xhr = new XMLHttpRequest();
-    
-    // Gắn cookie bảo mật
-    xhr.withCredentials = true; 
+    // Tách XHR thành hàm đệ quy để có thể Retry nếu dính lỗi 401
+    function performXhrUpload() {
+        const xhr = new XMLHttpRequest();
+        xhr.withCredentials = true; 
 
-    // Bắt sự kiện đang tải (Cập nhật phần trăm)
-    xhr.upload.addEventListener('progress', (e) => {
-        if (e.lengthComputable) {
-            const percentComplete = Math.round((e.loaded / e.total) * 100);
-            
-            // Gọi lại hàm vẽ tiến trình ta đã viết ở bước WebSocket
-            handleRealtimeProgress({
-                taskId: taskId,
-                taskName: taskName,
-                progress: percentComplete,
-                status: 'PROCESSING'
-            });
-        }
-    });
+        xhr.upload.addEventListener('progress', (e) => {
+            if (e.lengthComputable) {
+                const percentComplete = Math.round((e.loaded / e.total) * 100);
+                handleRealtimeProgress({ taskId: taskId, taskName: taskName, progress: percentComplete, status: 'PROCESSING' });
+            }
+        });
 
-    // Bắt sự kiện tải xong
-    xhr.addEventListener('load', () => {
-        if (xhr.status === 201 || xhr.status === 200) {
-            // Ép lên 100% và báo thành công
-            handleRealtimeProgress({ taskId: taskId, taskName: taskName, progress: 100, status: 'COMPLETED' });
-        } else {
+        xhr.addEventListener('load', async () => {
+            if (xhr.status === 201 || xhr.status === 200) {
+                handleRealtimeProgress({ taskId: taskId, taskName: taskName, progress: 100, status: 'COMPLETED' });
+                resetUploadBtn();
+            } 
+            // Nếu lỗi 401 (Hết hạn Token), tiến hành làm mới Token ngầm bằng Fetch rồi gọi lại XHR
+            else if (xhr.status === 401) {
+                console.log("XHR báo lỗi 401, đang thử làm mới thẻ...");
+                const refreshRes = await fetch('/api/auth/refresh', { method: 'POST', credentials: 'include' });
+                if (refreshRes.ok) {
+                    console.log("Đã cấp lại thẻ, đang tiếp tục Upload...");
+                    performXhrUpload(); // Đệ quy: Tự động chạy lại hàm XHR này từ đầu
+                } else {
+                    document.getElementById('btnLogout').click(); // Ép đăng xuất
+                }
+            } else {
+                handleRealtimeProgress({ taskId: taskId, taskName: taskName, progress: 0, status: 'FAILED' });
+                alert("Lỗi máy chủ khi lưu file!");
+                resetUploadBtn();
+            }
+        });
+
+        xhr.addEventListener('error', () => {
             handleRealtimeProgress({ taskId: taskId, taskName: taskName, progress: 0, status: 'FAILED' });
-            alert("Lỗi máy chủ khi lưu file!");
-        }
-        
-        // Mở khóa nút
+            alert("Lỗi mạng, mất kết nối đến máy chủ!");
+            resetUploadBtn();
+        });
+
+        xhr.open('POST', '/api/files/upload', true);
+        xhr.send(formData);
+    }
+
+    function resetUploadBtn() {
         btnUploadDropdown.innerHTML = originalText;
         btnUploadDropdown.disabled = false;
         fileInput.value = '';
-    });
+    }
 
-    // Bắt sự kiện rớt mạng
-    xhr.addEventListener('error', () => {
-        handleRealtimeProgress({ taskId: taskId, taskName: taskName, progress: 0, status: 'FAILED' });
-        btnUploadDropdown.innerHTML = originalText;
-        btnUploadDropdown.disabled = false;
-        fileInput.value = '';
-        alert("Lỗi mạng, mất kết nối đến máy chủ!");
-    });
-
-    // Bắt đầu gửi đi
-    xhr.open('POST', '/api/files/upload', true);
-    xhr.send(formData);
+    // Khởi chạy tiến trình upload
+    performXhrUpload();
 });

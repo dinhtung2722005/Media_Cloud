@@ -1,4 +1,5 @@
 package com.cloudmedia.api.security;
+
 import java.security.Key;
 import java.util.Date;
 
@@ -17,29 +18,43 @@ import io.jsonwebtoken.security.Keys;
 @Component
 public class JwtUtils {
 
-    // Đọc giá trị từ application.properties
+    // Đọc chữ ký bí mật từ application.properties
     @Value("${app.jwt.secret}")
     private String jwtSecret;
 
-    @Value("${app.jwt.expiration-ms}")
-    private int jwtExpirationMs;
+    // Đặt hằng số thời gian cho dễ quản lý (Tính bằng mili-giây)
+    private final long ACCESS_TOKEN_EXPIRATION = 900000L;       // 15 phút
+    private final long REFRESH_TOKEN_EXPIRATION = 604800000L;   // 7 ngày
 
-    // Hàm chuyển đổi chuỗi Base64 thành đối tượng Key của mã hóa HS256
+    // Hàm lấy chữ ký bí mật
     private Key getSigningKey() {
         byte[] keyBytes = Decoders.BASE64.decode(jwtSecret);
         return Keys.hmacShaKeyFor(keyBytes);
     }
 
-    public String generateJwtToken(User user) {
+    // 1. Tạo Access Token (Sống 15 phút)
+    public String generateAccessToken(User user) {
         return Jwts.builder()
-                .setSubject(user.getId())
-                .claim("username", user.getUsername())
-                .claim("email", user.getEmail())
+                .setSubject(user.getId()) // Đưa ID vào Subject để đồng nhất
+                .claim("username", user.getUsername()) // Lưu username vào claim
+                .claim("email", user.getEmail())       // Lưu email vào claim
                 .setIssuedAt(new Date())
-                .setExpiration(new Date((new Date()).getTime() + jwtExpirationMs))
-                .signWith(getSigningKey(), SignatureAlgorithm.HS256) // Sử dụng Key cố định
+                .setExpiration(new Date((new Date()).getTime() + ACCESS_TOKEN_EXPIRATION))
+                .signWith(getSigningKey(), SignatureAlgorithm.HS256) // Đã sửa key() thành getSigningKey()
                 .compact();
     }
+    
+    // 2. Tạo Refresh Token (Sống 7 ngày)
+    public String generateRefreshToken(User user) {
+        return Jwts.builder()
+                .setSubject(user.getId()) // Đưa ID vào Subject
+                .claim("username", user.getUsername()) // Cần thiết để sau này cấp lại Access Token
+                .setIssuedAt(new Date())
+                .setExpiration(new Date((new Date()).getTime() + REFRESH_TOKEN_EXPIRATION))
+                .signWith(getSigningKey(), SignatureAlgorithm.HS256) // Đã sửa key() thành getSigningKey()
+                .compact();
+    }
+
 
     public String getUserIdFromJwtToken(String token) {
         return Jwts.parserBuilder().setSigningKey(getSigningKey()).build()
@@ -52,6 +67,16 @@ public class JwtUtils {
         return claims.get("username", String.class);
     }
 
+    public Date getExpirationDateFromJwtToken(String token) {
+        return Jwts.parserBuilder()
+                .setSigningKey(getSigningKey())
+                .build()
+                .parseClaimsJws(token)
+                .getBody()
+                .getExpiration();
+    }
+
+
     public boolean validateJwtToken(String authToken) {
         try {
             Jwts.parserBuilder().setSigningKey(getSigningKey()).build().parseClaimsJws(authToken);
@@ -61,12 +86,4 @@ public class JwtUtils {
         }
         return false;
     }
-    public Date getExpirationDateFromJwtToken(String token) {
-        return Jwts.parserBuilder()
-                .setSigningKey(getSigningKey()) // Lưu ý: Dùng đúng hàm hoặc biến chứa Secret Key của bạn ở đây
-                .build()
-                .parseClaimsJws(token)
-                .getBody()
-                .getExpiration();
-}
 }

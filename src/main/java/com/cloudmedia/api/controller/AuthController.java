@@ -1,21 +1,24 @@
 package com.cloudmedia.api.controller;
-
-import com.cloudmedia.api.entity.RevokedToken;
-import com.cloudmedia.api.entity.User;
-import com.cloudmedia.api.repository.UserRepository;
-import com.cloudmedia.api.security.JwtUtils;
-import com.cloudmedia.api.service.UserService;
-import com.cloudmedia.api.repository.RevokedTokenRepository;
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.Cookie;
+import java.util.Map;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.web.bind.annotation.*;
-
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+import java.util.Optional;
+import com.cloudmedia.api.entity.RevokedToken;
+import com.cloudmedia.api.entity.User;
+import com.cloudmedia.api.repository.RevokedTokenRepository;
+import com.cloudmedia.api.repository.UserRepository;
+import com.cloudmedia.api.security.JwtUtils;
+import com.cloudmedia.api.service.UserService;
 import java.util.Map;
+import jakarta.servlet.http.Cookie;
+import jakarta.servlet.http.HttpServletRequest;
 
 @RestController
 @RequestMapping("/api/auth")
@@ -53,37 +56,33 @@ public class AuthController {
         String username = request.get("username");
         String password = request.get("password");
 
-        String token = userService.loginUser(username, password);        
-        if (token != null) {
+        Map<String, String> tokens = userService.loginUser(username, password);
+                if (tokens != null) {
             
-            // TẠO COOKIE BẢO MẬT VÀ DÁN TEM SAMESITE="Lax"
-            ResponseCookie springCookie = ResponseCookie.from("jwt_token", token)
-                    .httpOnly(true)
-                    .secure(false) // localhost đang dùng http nên để false
-                    .path("/")
-                    .maxAge(24 * 60 * 60)
-                    .sameSite("Lax") // <--- CHÌA KHÓA ĐỂ TRÌNH DUYỆT CHỊU NHẬN COOKIE
-                    .build();
+                String accessToken = tokens.get("accessToken");
+                String refreshToken = tokens.get("refreshToken");
+                ResponseCookie accessCookie = ResponseCookie.from("access_token", accessToken)
+                .httpOnly(true).secure(false).path("/").maxAge(15 * 60).sameSite("Lax").build();
 
-            return ResponseEntity.ok()
-                    .header(HttpHeaders.SET_COOKIE, springCookie.toString())
-                    .body(Map.of(
-                            "access_token", token,
-                            "message", "Đăng nhập thành công!",
-                            "username", username
-                    ));
+        // Tạo Refresh Cookie (Path hẹp, chỉ gửi khi gọi API /refresh)
+        ResponseCookie refreshCookie = ResponseCookie.from("refresh_token", refreshToken)
+                .httpOnly(true).secure(false).path("/api/auth/refresh").maxAge(7 * 24 * 60 * 60).sameSite("Lax").build();
+
+                return ResponseEntity.ok()
+                .header(HttpHeaders.SET_COOKIE, accessCookie.toString())
+                .header(HttpHeaders.SET_COOKIE, refreshCookie.toString()) // Trả 2 thẻ header SET_COOKIE
+                .body(Map.of("message", "Đăng nhập thành công!"));
         }
         
         return ResponseEntity.status(401).body(Map.of("error", "Sai tên đăng nhập hoặc mật khẩu!"));
     }
 
-    // THÊM API ĐĂNG XUẤT ĐỂ XÓA COOKIE
     @PostMapping("/logout")
     public ResponseEntity<?> logout(HttpServletRequest request) {
         String jwt = null;
         if (request.getCookies() != null) {
             for (Cookie cookie : request.getCookies()) {
-                if ("jwt_cookie".equals(cookie.getName())) { // Tên cookie do bạn đặt
+                if ("jwt_token".equals(cookie.getName())) { // Tên cookie do bạn đặt
                     jwt = cookie.getValue();
                     break;
                 }
@@ -94,6 +93,7 @@ public class AuthController {
             revokedToken.setToken(jwt);
             revokedToken.setExpirationDate(jwtUtils.getExpirationDateFromJwtToken(jwt));
             revokedTokenRepository.save(revokedToken);
+            
         }
         ResponseCookie cleanCookie = ResponseCookie.from("jwt_token", "")
                 .httpOnly(true)
@@ -107,4 +107,37 @@ public class AuthController {
                 .header(HttpHeaders.SET_COOKIE, cleanCookie.toString())
                 .body(Map.of("message", "Đã đăng xuất an toàn"));
     }
+    @PostMapping("/refresh")
+public ResponseEntity<?> refreshToken(HttpServletRequest request) {
+    String refreshToken = null;
+    
+    // 1. Tìm Cookie có tên là "refresh_token"
+    if (request.getCookies() != null) {
+        for (Cookie cookie : request.getCookies()) {
+            if ("refresh_token".equals(cookie.getName())) {
+                refreshToken = cookie.getValue();
+                break;
+            }
+        }
+    }
+
+    // 2. Kiểm tra tính hợp lệ
+    if (refreshToken != null && jwtUtils.validateJwtToken(refreshToken)) {
+        String username = jwtUtils.getUsernameFromJwtToken(refreshToken);
+        Optional<User> userOpt = userRepository.findByUsername(username);     
+        if (userOpt.isPresent()) {
+            User user = userOpt.get();   
+            String newAccessToken = jwtUtils.generateAccessToken(user);
+        
+        ResponseCookie newAccessCookie = ResponseCookie.from("access_token", newAccessToken)
+                .httpOnly(true).secure(false).path("/").maxAge(15 * 60).sameSite("Lax").build();
+
+        return ResponseEntity.ok()
+                .header(HttpHeaders.SET_COOKIE, newAccessCookie.toString())
+                .body(Map.of("message", "Đã cấp lại Access Token!"));
+    }
+}
+
+    return ResponseEntity.status(401).body(Map.of("error", "Refresh Token hết hạn, vui lòng đăng nhập lại"));
+}
 }
