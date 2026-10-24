@@ -6,6 +6,7 @@ import org.springframework.security.config.annotation.web.configuration.EnableWe
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import jakarta.servlet.http.HttpServletResponse;
 
 @Configuration
 @EnableWebSecurity
@@ -24,10 +25,12 @@ public class SecurityConfig {
             .csrf(csrf -> csrf.disable())
             // Thiết lập cơ chế không lưu trạng thái (Stateless)
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+            .exceptionHandling(errors -> errors.authenticationEntryPoint((request, response, exception) ->
+                    response.sendError(HttpServletResponse.SC_UNAUTHORIZED)))
             .authorizeHttpRequests(auth -> auth
                 // Mở cửa cho các API xác thực ban đầu
-                .requestMatchers("/api/auth/**","/ws/**").permitAll()
-                .requestMatchers("/", "/index.html", "/app.js", "/css/**", "/js/**", "/ws/**").permitAll()
+                .requestMatchers("/api/auth/**").permitAll()
+                .requestMatchers("/", "/index.html", "/app.js", "/css/**", "/js/**").permitAll()
                 // Tất cả các API quản lý thư mục, file đều phải được xác thực
                 .anyRequest().authenticated()
             );

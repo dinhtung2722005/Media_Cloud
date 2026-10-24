@@ -1,6 +1,7 @@
 package com.cloudmedia.api.service;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -47,17 +48,20 @@ public class FileService {
         // Sinh tên file vật lý ẩn danh (UUID)
         String physicalFileId = UUID.randomUUID().toString();
         String originalFilename = file.getOriginalFilename();
-        String extension = "";
-        
-        if (originalFilename != null && originalFilename.contains(".")) {
-            extension = originalFilename.substring(originalFilename.lastIndexOf(".") + 1);
-        }
+        String extension = MediaService.fileExtension(originalFilename);
         
         String physicalFileName = physicalFileId + (extension.isEmpty() ? "" : "." + extension);
         Path targetLocation = Paths.get(baseStorageDir).resolve(physicalFileName);
+        Files.createDirectories(targetLocation.toAbsolutePath().getParent());
 
         // Copy luồng dữ liệu xuống ổ đĩa vật lý
-        Files.copy(file.getInputStream(), targetLocation, StandardCopyOption.REPLACE_EXISTING);
+        try (var input = file.getInputStream()) {
+            Files.copy(input, targetLocation, StandardCopyOption.REPLACE_EXISTING);
+        } catch (IOException exception) {
+            try { Files.deleteIfExists(targetLocation); }
+            catch (IOException cleanupFailure) { exception.addSuppressed(cleanupFailure); }
+            throw exception;
+        }
 
         // Chuẩn bị thực thể dữ liệu để lưu DB
         MediaFile mediaFile = new MediaFile();
@@ -71,7 +75,18 @@ public class FileService {
         mediaFile.setStatus("Ready");
         mediaFile.setSource("Local_Upload");
 
-        return mediaFileRepository.save(mediaFile);
+        try {
+            return mediaFileRepository.saveAndFlush(mediaFile);
+        } catch (RuntimeException exception) {
+            try { Files.deleteIfExists(targetLocation); }
+            catch (IOException cleanupFailure) { exception.addSuppressed(cleanupFailure); }
+            throw exception;
+        }
+    }
+
+    public MediaFile requireOwnedFile(String fileId, String userId) {
+        return mediaFileRepository.findById(fileId).filter(file -> userId.equals(file.getUserId()))
+                .orElseThrow(() -> new IllegalArgumentException("File không tồn tại hoặc bạn không có quyền truy cập"));
     }
 
     // 2. NGHIỆP VỤ LẤY ĐỐI TƯỢNG FILE (Dùng chung cho Download và Stream)
@@ -99,19 +114,15 @@ public class FileService {
 
     // 3. NGHIỆP VỤ XÓA FILE
     public void deleteFile(String fileId, String userId) {
-        Optional<MediaFile> fileOptional = mediaFileRepository.findById(fileId);
-        if (fileOptional.isEmpty() || !fileOptional.get().getUserId().equals(userId)) {
-            throw new RuntimeException("File không tồn tại hoặc bạn không có quyền xóa!");
-        }
-
-        MediaFile mediaFile = fileOptional.get();
+        MediaFile mediaFile = requireOwnedFile(fileId, userId);
 
         // Xóa file vật lý
         Path filePath = Paths.get(mediaFile.getStoragePath());
         try {
             Files.deleteIfExists(filePath);
         } catch (IOException e) {
-            System.err.println("Không thể xóa file vật lý, bỏ qua để làm sạch DB: " + e.getMessage());
+            // Keep the record so the user can retry. A missing file is safe to delete again.
+            throw new UncheckedIOException("Không thể xóa file vật lý", e);
         }
 
         // Xóa dòng thông tin trong DB

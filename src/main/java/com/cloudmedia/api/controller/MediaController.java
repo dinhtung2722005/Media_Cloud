@@ -1,48 +1,35 @@
 package com.cloudmedia.api.controller;
 
-import com.cloudmedia.api.service.MediaEngineService;
-import org.jobrunr.scheduling.JobScheduler;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
-
+import com.cloudmedia.api.service.FileService;
+import com.cloudmedia.api.service.MediaJobService;
 import java.util.Map;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/media")
 public class MediaController {
+    private final MediaJobService jobs;
+    private final FileService files;
 
-    private final JobScheduler jobScheduler;
-    private final MediaEngineService mediaEngineService;
-
-    // Tiêm các dependency (Không cần @Autowired trên Spring Boot bản mới nếu chỉ có 1 constructor)
-    public MediaController(JobScheduler jobScheduler, MediaEngineService mediaEngineService) {
-        this.jobScheduler = jobScheduler;
-        this.mediaEngineService = mediaEngineService;
+    public MediaController(MediaJobService jobs, FileService files) {
+        this.jobs = jobs;
+        this.files = files;
     }
 
     @PostMapping("/convert-to-mp3")
-    public ResponseEntity<?> queueFormatConversion(@RequestBody Map<String, String> request) {
-        
-        // 1. Lấy thông tin từ cục JSON gửi lên qua Postman
+    public ResponseEntity<?> convert(@RequestBody Map<String, String> request) {
         String fileId = request.get("fileId");
-        String inputPath = request.get("inputPath");   // Ví dụ: G:\MediaDrive\Downloads\video.mp4
-        String outputPath = request.get("outputPath"); // Ví dụ: G:\MediaDrive\Downloads\audio.mp3
-
-        // Kiểm tra an toàn dữ liệu cơ bản
-        if (fileId == null || inputPath == null || outputPath == null) {
-            return ResponseEntity.badRequest().body(Map.of(
-                    "error", "Vui lòng cung cấp đầy đủ fileId, inputPath và outputPath!"
-            ));
+        if (fileId == null || fileId.isBlank() || request.containsKey("inputPath") || request.containsKey("outputPath")) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Chỉ cung cấp fileId để chuyển đổi"));
         }
-
-        // 2. ĐÈN XANH: Đẩy tác vụ gọi FFmpeg vào hàng đợi ngầm của JobRunr
-        jobScheduler.enqueue(() -> mediaEngineService.convertMp4ToMp3(fileId, inputPath, outputPath));
-
-        // 3. Trả về HTTP 202 (Accepted) ngay lập tức cho client
-        return ResponseEntity.accepted().body(Map.of(
-                "message", "Yêu cầu chuyển đổi định dạng đã được tiếp nhận và đưa vào hàng đợi!",
-                "fileId", fileId,
-                "status", "Queued"
-        ));
+        String userId = (String) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        try { files.requireOwnedFile(fileId, userId); }
+        catch (IllegalArgumentException exception) {
+            return ResponseEntity.status(404).body(Map.of("error", exception.getMessage()));
+        }
+        String jobId = jobs.enqueueConversion(userId, fileId);
+        return ResponseEntity.accepted().body(Map.of("fileId", fileId, "jobId", jobId, "status", "QUEUED"));
     }
 }

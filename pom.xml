@@ -51,10 +51,6 @@
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-websocket</artifactId>
 		</dependency>
-		<dependency>
-			<groupId>org.springframework.amqp</groupId>
-			<artifactId>spring-rabbit-stream</artifactId>
-		</dependency>
 
 		<dependency>
 			<groupId>com.microsoft.sqlserver</groupId>
@@ -92,15 +88,6 @@
     <version>0.11.5</version>
     <scope>runtime</scope>
 </dependency>
-<dependency>
-    <groupId>org.springframework.boot</groupId>
-    <artifactId>spring-boot-starter-websocket</artifactId>
-</dependency>
-<dependency>
-        <groupId>org.jobrunr</groupId>
-        <artifactId>jobrunr-spring-boot-3-starter</artifactId>
-        <version>7.3.0</version>
-    </dependency>
 	</dependencies>
 
 	<build>

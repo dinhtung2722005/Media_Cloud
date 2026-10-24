@@ -10,7 +10,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
-import com.cloudmedia.api.repository.RevokedTokenRepository;
+import com.cloudmedia.api.service.AuthSessionService;
 import java.io.IOException;
 import java.util.ArrayList;
 
@@ -18,21 +18,26 @@ import java.util.ArrayList;
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtUtils jwtUtils;
-    private final RevokedTokenRepository revokedTokenRepository;
-    public JwtAuthenticationFilter(JwtUtils jwtUtils,RevokedTokenRepository revokedTokenRepository) {
-        this.revokedTokenRepository = revokedTokenRepository;
+    private final AuthSessionService sessions;
+    public JwtAuthenticationFilter(JwtUtils jwtUtils, AuthSessionService sessions) {
+        this.sessions = sessions;
         this.jwtUtils = jwtUtils;
+    }
+
+    @Override
+    protected boolean shouldNotFilter(HttpServletRequest request) {
+        return request.getRequestURI().substring(request.getContextPath().length()).startsWith("/api/auth/");
     }
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
             throws ServletException, IOException {
         try {
-            // ĐÃ SỬA: Gọi đúng hàm getJwtFromRequest để bóc Token từ Cookie
+            // Cookie cho trình duyệt, Bearer header cho API client.
             String jwt = getJwtFromRequest(request);
             
-            if (jwt != null && jwtUtils.validateJwtToken(jwt)) {
-                if (revokedTokenRepository.existsByToken(jwt)) {
+            if (jwt != null && jwtUtils.validateAccessToken(jwt)) {
+                if (!sessions.isActive(jwt)) {
                     System.out.println("CẢNH BÁO: Phát hiện Token đã bị thu hồi cố gắng truy cập!");
                     response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "Token đã bị thu hồi!");
                     return; // Chặn đứng luôn, không cho đi tiếp
@@ -43,10 +48,13 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 // Lưu thông tin xác thực vào Context của Spring Security
                 UsernamePasswordAuthenticationToken authentication = 
                         new UsernamePasswordAuthenticationToken(userId, null, new ArrayList<>());
+                authentication.setDetails(jwtUtils.getSessionId(jwt));
                 SecurityContextHolder.getContext().setAuthentication(authentication);
             }
         } catch (Exception e) {
-            System.err.println("Không thể thiết lập xác thực người dùng: " + e.getMessage());
+            SecurityContextHolder.clearContext();
+            response.sendError(HttpServletResponse.SC_SERVICE_UNAVAILABLE, "Không thể kiểm tra phiên đăng nhập");
+            return;
         }
 
         filterChain.doFilter(request, response);
@@ -57,7 +65,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         // 1. Tìm trong Cookie
         if (request.getCookies() != null) {
             for (Cookie cookie : request.getCookies()) {
-                if ("jwt_token".equals(cookie.getName())) {
+                if ("access_token".equals(cookie.getName())) {
                     return cookie.getValue();
                 }
             }

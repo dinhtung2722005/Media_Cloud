@@ -1,6 +1,5 @@
 package com.cloudmedia.api.service;
 import java.time.LocalDateTime;
-import java.util.HashMap;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -10,16 +9,15 @@ import org.springframework.stereotype.Service;
 
 import com.cloudmedia.api.entity.User;
 import com.cloudmedia.api.repository.UserRepository;
-import com.cloudmedia.api.security.JwtUtils;
 import java.util.Map;
 @Service
 public class UserService{
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
-    private final JwtUtils jwtUtils;
-    public UserService(UserRepository userRepository, JwtUtils jwtUtils) {
+    private final AuthSessionService sessions;
+    public UserService(UserRepository userRepository, AuthSessionService sessions) {
         this.userRepository = userRepository;
-        this.jwtUtils = jwtUtils;
+        this.sessions = sessions;
         this.passwordEncoder = new BCryptPasswordEncoder();
     }
     public User registerUser(String username, String email, String rawPassword) {
@@ -44,15 +42,7 @@ public class UserService{
         User user = userOpt.get();
         
         // 1. Tạo cặp Token từ JwtUtils
-        String accessToken = jwtUtils.generateAccessToken(user);
-        String refreshToken = jwtUtils.generateRefreshToken(user);
-        
-        // 2. Đóng gói cả 2 vào một Map
-        Map<String, String> tokens = new HashMap<>();
-        tokens.put("accessToken", accessToken);
-        tokens.put("refreshToken", refreshToken);
-        
-        return tokens; // Trả về chiếc hộp chứa 2 token
+        return sessions.issueTokens(user);
     }
     
     return null; // Đăng nhập thất bại

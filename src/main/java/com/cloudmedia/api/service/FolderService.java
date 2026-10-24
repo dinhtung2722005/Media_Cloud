@@ -19,6 +19,7 @@ public class FolderService{
     }
     public Folder createFolder(String folderName, String parentFolderId, String userId) {
         String validParentId = (parentFolderId != null && !parentFolderId.trim().isEmpty()) ? parentFolderId : null;
+        if (validParentId != null) getFolderById(validParentId, userId);
 
         Folder folder = new Folder();
         folder.setId(UUID.randomUUID().toString());

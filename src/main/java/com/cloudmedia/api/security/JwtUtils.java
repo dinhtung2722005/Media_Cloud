@@ -1,89 +1,70 @@
 package com.cloudmedia.api.security;
 
+import com.cloudmedia.api.entity.User;
+import io.jsonwebtoken.*;
+import io.jsonwebtoken.io.Decoders;
+import io.jsonwebtoken.security.Keys;
+import jakarta.annotation.PostConstruct;
 import java.security.Key;
 import java.util.Date;
-
+import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
-import com.cloudmedia.api.entity.User;
-
-import io.jsonwebtoken.Claims;
-import io.jsonwebtoken.JwtException;
-import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.SignatureAlgorithm;
-import io.jsonwebtoken.io.Decoders;
-import io.jsonwebtoken.security.Keys;
-
 @Component
 public class JwtUtils {
+    public static final long ACCESS_TOKEN_EXPIRATION = 15L * 60 * 1000;
+    public static final long REFRESH_TOKEN_EXPIRATION = 7L * 24 * 60 * 60 * 1000;
 
-    // Đọc chữ ký bí mật từ application.properties
     @Value("${app.jwt.secret}")
     private String jwtSecret;
 
-    // Đặt hằng số thời gian cho dễ quản lý (Tính bằng mili-giây)
-    private final long ACCESS_TOKEN_EXPIRATION = 900000L;       // 15 phút
-    private final long REFRESH_TOKEN_EXPIRATION = 604800000L;   // 7 ngày
-
-    // Hàm lấy chữ ký bí mật
-    private Key getSigningKey() {
-        byte[] keyBytes = Decoders.BASE64.decode(jwtSecret);
-        return Keys.hmacShaKeyFor(keyBytes);
-    }
-
-    // 1. Tạo Access Token (Sống 15 phút)
-    public String generateAccessToken(User user) {
-        return Jwts.builder()
-                .setSubject(user.getId()) // Đưa ID vào Subject để đồng nhất
-                .claim("username", user.getUsername()) // Lưu username vào claim
-                .claim("email", user.getEmail())       // Lưu email vào claim
-                .setIssuedAt(new Date())
-                .setExpiration(new Date((new Date()).getTime() + ACCESS_TOKEN_EXPIRATION))
-                .signWith(getSigningKey(), SignatureAlgorithm.HS256) // Đã sửa key() thành getSigningKey()
-                .compact();
-    }
-    
-    // 2. Tạo Refresh Token (Sống 7 ngày)
-    public String generateRefreshToken(User user) {
-        return Jwts.builder()
-                .setSubject(user.getId()) // Đưa ID vào Subject
-                .claim("username", user.getUsername()) // Cần thiết để sau này cấp lại Access Token
-                .setIssuedAt(new Date())
-                .setExpiration(new Date((new Date()).getTime() + REFRESH_TOKEN_EXPIRATION))
-                .signWith(getSigningKey(), SignatureAlgorithm.HS256) // Đã sửa key() thành getSigningKey()
-                .compact();
-    }
-
-
-    public String getUserIdFromJwtToken(String token) {
-        return Jwts.parserBuilder().setSigningKey(getSigningKey()).build()
-                .parseClaimsJws(token).getBody().getSubject();
-    }
-
-    public String getUsernameFromJwtToken(String token) {
-        Claims claims = Jwts.parserBuilder().setSigningKey(getSigningKey()).build()
-                .parseClaimsJws(token).getBody();
-        return claims.get("username", String.class);
-    }
-
-    public Date getExpirationDateFromJwtToken(String token) {
-        return Jwts.parserBuilder()
-                .setSigningKey(getSigningKey())
-                .build()
-                .parseClaimsJws(token)
-                .getBody()
-                .getExpiration();
-    }
-
-
-    public boolean validateJwtToken(String authToken) {
+    @PostConstruct
+    public void validateConfiguration() {
         try {
-            Jwts.parserBuilder().setSigningKey(getSigningKey()).build().parseClaimsJws(authToken);
-            return true;
-        } catch (JwtException | IllegalArgumentException e) {
-            System.err.println("Token không hợp lệ: " + e.getMessage());
+            getSigningKey();
+        } catch (RuntimeException exception) {
+            throw new IllegalStateException("APP_JWT_SECRET phải là khóa Base64 chứa ít nhất 32 byte", exception);
         }
-        return false;
+    }
+
+    private Key getSigningKey() {
+        return Keys.hmacShaKeyFor(Decoders.BASE64.decode(jwtSecret));
+    }
+
+    public String generateAccessToken(User user, String sessionId) {
+        return generateToken(user, sessionId, "access", ACCESS_TOKEN_EXPIRATION);
+    }
+
+    public String generateRefreshToken(User user, String sessionId) {
+        return generateToken(user, sessionId, "refresh", REFRESH_TOKEN_EXPIRATION);
+    }
+
+    private String generateToken(User user, String sessionId, String type, long lifetime) {
+        if (sessionId == null || sessionId.isBlank()) throw new IllegalArgumentException("Thiếu mã phiên");
+        return Jwts.builder().setId(UUID.randomUUID().toString()).setSubject(user.getId())
+                .claim("sid", sessionId).claim("token_type", type).claim("username", user.getUsername())
+                .setIssuedAt(new Date()).setExpiration(new Date(System.currentTimeMillis() + lifetime))
+                .signWith(getSigningKey(), SignatureAlgorithm.HS256).compact();
+    }
+
+    private Claims claims(String token) {
+        return Jwts.parserBuilder().setSigningKey(getSigningKey()).build().parseClaimsJws(token).getBody();
+    }
+
+    public String getUserIdFromJwtToken(String token) { return claims(token).getSubject(); }
+    public String getSessionId(String token) { return claims(token).get("sid", String.class); }
+
+    public boolean validateAccessToken(String token) { return validateToken(token, "access"); }
+    public boolean validateRefreshToken(String token) { return validateToken(token, "refresh"); }
+
+    private boolean validateToken(String token, String type) {
+        try {
+            Claims value = claims(token);
+            return type.equals(value.get("token_type", String.class))
+                    && value.getSubject() != null && value.get("sid", String.class) != null;
+        } catch (JwtException | IllegalArgumentException exception) {
+            return false;
+        }
     }
 }

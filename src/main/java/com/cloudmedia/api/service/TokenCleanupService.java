@@ -1,6 +1,7 @@
 package com.cloudmedia.api.service;
 
 import com.cloudmedia.api.repository.RevokedTokenRepository;
+import com.cloudmedia.api.repository.AuthSessionRepository;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
@@ -10,9 +11,11 @@ import java.util.Date;
 public class TokenCleanupService {
 
     private final RevokedTokenRepository revokedTokenRepository;
+    private final AuthSessionRepository sessions;
 
-    public TokenCleanupService(RevokedTokenRepository revokedTokenRepository) {
+    public TokenCleanupService(RevokedTokenRepository revokedTokenRepository, AuthSessionRepository sessions) {
         this.revokedTokenRepository = revokedTokenRepository;
+        this.sessions = sessions;
     }
 
     
@@ -21,6 +24,7 @@ public class TokenCleanupService {
         System.out.println("Bắt đầu dọn dẹp các Token đã hết hạn trong Database...");
         
         revokedTokenRepository.deleteByExpirationDateBefore(new Date());
+        sessions.deleteByExpiresAtBefore(new Date());
         
         System.out.println("Đã dọn dẹp xong Token rác!");
     }

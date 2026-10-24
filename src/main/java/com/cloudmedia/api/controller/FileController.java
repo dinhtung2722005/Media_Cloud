@@ -3,13 +3,12 @@ package com.cloudmedia.api.controller;
 import com.cloudmedia.api.entity.MediaFile;
 import com.cloudmedia.api.service.FileService;
 import com.cloudmedia.api.service.FileService.FileResourceWrapper;
-import org.springframework.core.io.Resource;
-import org.springframework.core.io.support.ResourceRegion;
 import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpRange;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.ContentDisposition;
+import java.nio.charset.StandardCharsets;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
@@ -50,32 +49,13 @@ public class FileController {
     }
 
     @GetMapping("/stream/{fileId}")
-    public ResponseEntity<ResourceRegion> streamFile(@PathVariable String fileId, @RequestHeader HttpHeaders headers) {
+    public ResponseEntity<?> streamFile(@PathVariable String fileId) {
         try {
             FileResourceWrapper wrapper = fileService.getFileForResponse(fileId, getCurrentUserId());
-            Resource video = wrapper.getResource();
-            long contentLength = video.contentLength();
-            long chunkSize = 10L * 1024 * 1024;
-            // Đọc Header Range từ trình duyệt gửi lên
-            HttpRange range = headers.getRange().isEmpty() ? null : headers.getRange().get(0);
-
-            if (range != null) {
-                long start = range.getRangeStart(contentLength);
-                long end = range.getRangeEnd(contentLength);
-                long rangeLength = Math.min(chunkSize, end - start + 1); 
-                ResourceRegion region = new ResourceRegion(video, start, rangeLength);
-
-                return ResponseEntity.status(HttpStatus.PARTIAL_CONTENT) // Mã 206
-                        .contentType(MediaType.parseMediaType(wrapper.getMimeType()))
-                        .body(region);
-            } else {
-                long rangeLength = Math.min(1024 * 1024, contentLength);
-                ResourceRegion region = new ResourceRegion(video, 0, rangeLength);
-                
-                return ResponseEntity.status(HttpStatus.PARTIAL_CONTENT)
-                        .contentType(MediaType.parseMediaType(wrapper.getMimeType()))
-                        .body(region);
-            }
+            // Spring MVC serves the full Resource or handles Range/416 transparently.
+            return ResponseEntity.ok().header(HttpHeaders.ACCEPT_RANGES, "bytes")
+                    .contentType(MediaType.parseMediaType(wrapper.getMimeType()))
+                    .body(wrapper.getResource());
         } catch (Exception e) {
             // Khi bị lỗi, không trả về Map JSON nữa mà chỉ trả về mã 404 (Not Found)
             return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
@@ -104,8 +84,10 @@ public class FileController {
         try {
             fileService.deleteFile(fileId, getCurrentUserId());
             return ResponseEntity.ok(Map.of("message", "Đã xóa file thành công và giải phóng ổ cứng!"));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", e.getMessage()));
         } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("error", e.getMessage()));
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("error", "Không thể xóa file; vui lòng thử lại"));
         }
     }
 
@@ -114,7 +96,8 @@ public class FileController {
         try {
             FileResourceWrapper wrapper = fileService.getFileForResponse(fileId, getCurrentUserId());
             return ResponseEntity.ok()
-                    .header(HttpHeaders.CONTENT_DISPOSITION, dispositionType + "; filename=\"" + wrapper.getFilename() + "\"")
+                    .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment()
+                            .filename(wrapper.getFilename(), StandardCharsets.UTF_8).build().toString())
                     .contentType(MediaType.parseMediaType(wrapper.getMimeType()))
                     .body(wrapper.getResource());
         } catch (Exception e) {

@@ -67,9 +67,14 @@ public class FolderController {
 
     // [GET] /api/folders - Lấy danh sách thư mục (Status: 200 OK)
     @GetMapping
-    public ResponseEntity<List<Folder>> getFolders(@RequestParam(required = false) String parentId) {
-        List<Folder> folders = folderService.getFolders(getCurrentUserId(), parentId);
-        return ResponseEntity.ok(folders);
+    public ResponseEntity<?> getFolders(@RequestParam(required = false) String parentId) {
+        if (parentId != null && !parentId.isBlank()) {
+            return getFolderById(parentId);
+        }
+        String userId = getCurrentUserId();
+        return ResponseEntity.ok(Map.of(
+                "folders", folderService.getFolders(userId, null),
+                "files", mediaFileRepository.findByUserIdAndFolderIdIsNull(userId)));
     }
 
     
