@@ -1,56 +1,89 @@
 package com.cloudmedia.api.controller;
 
 import com.cloudmedia.api.service.MediaService;
+import java.util.*;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
-import org.springframework.web.server.ResponseStatusException;
-
-import java.io.IOException;
-import java.util.Map;
 
 @RestController
 @RequestMapping("/api/files")
 public class ChunkUploadController {
-    private final MediaService mediaService;
+  private final MediaService media;
 
-    public ChunkUploadController(MediaService mediaService) {
-        this.mediaService = mediaService;
+  public ChunkUploadController(MediaService media) {
+    this.media = media;
+  }
+
+  private String user() {
+    return (String) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+  }
+
+  public record InitializeRequest(
+      String uploadId,
+      String filename,
+      Long size,
+      Integer totalChunks,
+      String folderId,
+      String sha256) {
+    public InitializeRequest {
+      if (size == null || totalChunks == null)
+        throw com.cloudmedia.api.domain.DomainException.invalid(
+            "Cần cung cấp kích thước và số mảnh");
     }
+  }
 
-    @PostMapping("/upload-chunk")
-    public ResponseEntity<?> uploadChunk(@RequestParam("file") MultipartFile chunk,
-                                         @RequestParam String fileGuid,
-                                         @RequestParam int chunkIndex,
-                                         @RequestParam int totalChunks) {
-        try {
-            mediaService.saveChunk(chunk, fileGuid, chunkIndex, totalChunks, currentUserId());
-            return ResponseEntity.ok(Map.of("chunkIndex", chunkIndex));
-        } catch (ResponseStatusException exception) {
-            return ResponseEntity.status(exception.getStatusCode()).body(Map.of("error", exception.getReason()));
-        } catch (IllegalArgumentException exception) {
-            return ResponseEntity.badRequest().body(Map.of("error", exception.getMessage()));
-        } catch (IOException exception) {
-            return ResponseEntity.internalServerError().body(Map.of("error", "Không thể lưu mảnh file"));
-        }
-    }
+  public record MergeRequest(
+      String fileGuid, String originalFilename, int totalChunks, String folderId) {}
 
-    @PostMapping("/merge-chunks")
-    public ResponseEntity<?> mergeChunks(@RequestBody MergeRequest request) {
-        try {
-            return ResponseEntity.status(201).body(mediaService.mergeChunks(request.fileGuid(),
-                    request.originalFilename(), request.totalChunks(), currentUserId(), request.folderId()));
-        } catch (IllegalArgumentException exception) {
-            return ResponseEntity.badRequest().body(Map.of("error", exception.getMessage()));
-        } catch (IOException exception) {
-            return ResponseEntity.internalServerError().body(Map.of("error", "Không thể gộp file"));
-        }
-    }
+  @PostMapping("/uploads")
+  public Object initialize(@RequestBody InitializeRequest request) throws java.io.IOException {
+    String id = request.uploadId() == null ? UUID.randomUUID().toString() : request.uploadId();
+    media.initialize(
+        user(),
+        id,
+        request.filename(),
+        request.size(),
+        request.totalChunks(),
+        request.folderId(),
+        request.sha256());
+    return media.status(user(), id);
+  }
 
-    private String currentUserId() {
-        return (String) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
-    }
+  @GetMapping("/uploads/{id}")
+  public Object status(@PathVariable String id) throws java.io.IOException {
+    return media.status(user(), id);
+  }
 
-    public record MergeRequest(String fileGuid, String originalFilename, int totalChunks, String folderId) {}
+  @DeleteMapping("/uploads/{id}")
+  public ResponseEntity<?> abort(@PathVariable String id) {
+    media.abort(user(), id);
+    return ResponseEntity.noContent().build();
+  }
+
+  @PostMapping("/upload-chunk")
+  public Object uploadChunk(
+      @RequestParam("file") MultipartFile chunk,
+      @RequestParam String fileGuid,
+      @RequestParam int chunkIndex,
+      @RequestParam int totalChunks)
+      throws java.io.IOException {
+    media.saveChunk(chunk, fileGuid, chunkIndex, totalChunks, user());
+    return Map.of("chunkIndex", chunkIndex);
+  }
+
+  @PostMapping("/merge-chunks")
+  public ResponseEntity<?> mergeChunks(@RequestBody MergeRequest request)
+      throws java.io.IOException {
+    return ResponseEntity.status(201)
+        .body(
+            ApiViews.FileView.from(
+                media.mergeChunks(
+                    request.fileGuid(),
+                    request.originalFilename(),
+                    request.totalChunks(),
+                    user(),
+                    request.folderId())));
+  }
 }

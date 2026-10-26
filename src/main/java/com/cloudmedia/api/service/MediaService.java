@@ -1,254 +1,253 @@
 package com.cloudmedia.api.service;
 
-import com.cloudmedia.api.entity.MediaFile;
-import com.cloudmedia.api.repository.FolderRepository;
-import com.cloudmedia.api.repository.MediaFileRepository;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.cloudmedia.api.domain.*;
+import com.cloudmedia.api.entity.*;
+import java.io.*;
+import java.nio.file.*;
+import java.nio.file.attribute.FileTime;
+import java.time.Instant;
+import java.util.*;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
-import org.springframework.scheduling.annotation.Scheduled;
-import org.springframework.http.HttpStatus;
-import org.springframework.web.server.ResponseStatusException;
-import jakarta.annotation.PostConstruct;
-
-import java.io.BufferedOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
-import java.nio.file.LinkOption;
-import java.nio.file.attribute.FileTime;
-import java.util.Comparator;
-import java.util.UUID;
-import java.util.stream.IntStream;
 
 @Service
 public class MediaService {
-    private static final Logger log = LoggerFactory.getLogger(MediaService.class);
-    private static final long CHUNK_SIZE = 5L * 1024 * 1024;
-    private static final int MAX_CHUNKS = 10000;
-    private final Object[] uploadLocks = IntStream.range(0, 64).mapToObj(i -> new Object()).toArray();
-    private final MediaFileRepository mediaFileRepository;
-    private final FolderRepository folderRepository;
+  private static final long CHUNK_SIZE = 5L * 1024 * 1024;
+  private final UploadCoordinator uploads;
+  private final FileStorage storage;
 
-    @Value("${app.storage.temp-dir}")
-    private String tempStorageDir;
+  @Value("${app.storage.temp-dir:./storage/temp}")
+  private String tempStorageDir = "./storage/temp";
 
-    @Value("${app.storage.base-dir}")
-    private String baseStorageDir;
+  @Value("${app.upload.max-temp-bytes-per-user:1073741824}")
+  private long maxTempBytes = 1073741824L;
 
-    @Value("${app.upload.max-active-per-user:5}")
-    private int maxActiveUploads = 5;
-    @Value("${app.upload.max-temp-bytes-per-user:1073741824}")
-    private long maxTempBytes = 1073741824L;
-    @Value("${app.upload.expire-after-ms:86400000}")
-    private long expireAfterMillis = 86400000L;
+  public MediaService(UploadCoordinator uploads, FileStorage storage) {
+    this.uploads = uploads;
+    this.storage = storage;
+  }
 
-    public MediaService(MediaFileRepository mediaFileRepository, FolderRepository folderRepository) {
-        this.mediaFileRepository = mediaFileRepository;
-        this.folderRepository = folderRepository;
-    }
+  public UploadSession initialize(
+      String user, String upload, String name, long bytes, int total, String folder) {
+    return uploads.initialize(user, upload, name, bytes, total, folder);
+  }
 
-    @PostConstruct
-    public void validateConfiguration() {
-        if (maxActiveUploads < 1 || maxTempBytes < 1 || expireAfterMillis < 1) {
-            throw new IllegalStateException("Giới hạn upload và thời hạn lưu phải lớn hơn 0");
-        }
-    }
+  public UploadSession initialize(
+      String user,
+      String upload,
+      String name,
+      long bytes,
+      int total,
+      String folder,
+      String checksum) {
+    return uploads.initialize(user, upload, name, bytes, total, folder, checksum);
+  }
 
-    public void saveChunk(MultipartFile chunk, String fileGuid, int chunkIndex, int totalChunks, String userId)
-            throws IOException {
-        Path uploadDir = uploadDirectory(userId, fileGuid);
-        validateChunkCount(totalChunks);
-        if (chunkIndex < 0 || chunkIndex >= totalChunks || chunk.getSize() > CHUNK_SIZE
-                || (chunk.isEmpty() && totalChunks != 1)) {
-            throw new IllegalArgumentException("Mảnh file không hợp lệ hoặc vượt quá 5 MB");
-        }
-        synchronized (lockFor(uploadDir.getParent())) {
-            Path ownerDir = uploadDir.getParent();
-            Files.createDirectories(ownerDir);
-            cleanupOwner(ownerDir, System.currentTimeMillis());
-            enforceUploadLimits(ownerDir, uploadDir, chunkIndex, chunk.getSize());
-            Files.createDirectories(uploadDir);
-            Path manifest = uploadDir.resolve("total-chunks");
-            if (Files.exists(manifest)) {
-                requireChunkCount(manifest, totalChunks);
-            } else {
-                Files.writeString(manifest, Integer.toString(totalChunks));
-            }
-            Path partial = uploadDir.resolve(chunkIndex + ".part");
+  public void saveChunk(MultipartFile chunk, String guid, int index, int total, String user)
+      throws IOException {
+    validate(total);
+    InputRules.uuid(user);
+    InputRules.uuid(guid);
+    if (index < 0
+        || index >= total
+        || chunk.getSize() > CHUNK_SIZE
+        || (chunk.isEmpty() && total != 1))
+      throw DomainException.invalid("Mảnh tệp không hợp lệ hoặc vượt quá 5 MiB");
+    try {
+      uploads.chunk(
+          user,
+          guid,
+          total,
+          session -> {
             try {
-                try (InputStream input = chunk.getInputStream()) {
-                    Files.copy(input, partial, StandardCopyOption.REPLACE_EXISTING);
-                }
-                Files.move(partial, uploadDir.resolve(chunkIndex + ".tmp"), StandardCopyOption.REPLACE_EXISTING);
-                Files.setLastModifiedTime(uploadDir, FileTime.fromMillis(System.currentTimeMillis()));
-            } finally {
+              if (session.getExpectedBytes() != null) {
+                long expected =
+                    index == total - 1
+                        ? session.getExpectedBytes() - (total - 1) * CHUNK_SIZE
+                        : CHUNK_SIZE;
+                if (expected != chunk.getSize())
+                  throw DomainException.invalid("Kích thước mảnh không khớp");
+              }
+              Path directory = directory(user, guid);
+              Files.createDirectories(directory);
+              long used = temporaryBytes(directory.getParent()),
+                  previous =
+                      Files.exists(directory.resolve(index + ".tmp"))
+                          ? Files.size(directory.resolve(index + ".tmp"))
+                          : 0;
+              if (chunk.getSize() > maxTempBytes - (used - previous))
+                throw new DomainException(
+                    org.springframework.http.HttpStatus.PAYLOAD_TOO_LARGE,
+                    "UPLOAD_TEMP_QUOTA",
+                    "Vượt giới hạn dữ liệu tạm");
+              Path partial = directory.resolve(index + ".part");
+              try (InputStream input = chunk.getInputStream()) {
+                Files.copy(input, partial, StandardCopyOption.REPLACE_EXISTING);
+              } catch (IOException error) {
                 Files.deleteIfExists(partial);
+                throw error;
+              }
+              Files.move(
+                  partial, directory.resolve(index + ".tmp"), StandardCopyOption.REPLACE_EXISTING);
+              Files.setLastModifiedTime(directory, FileTime.from(Instant.now()));
+            } catch (IOException error) {
+              throw new UncheckedIOException(error);
             }
-        }
+          });
+    } catch (UncheckedIOException error) {
+      throw error.getCause();
     }
+  }
 
-    public MediaFile mergeChunks(String fileGuid, String originalFilename, int totalChunks,
-                                 String userId, String folderId) throws IOException {
-        Path uploadDir = uploadDirectory(userId, fileGuid);
-        validateChunkCount(totalChunks);
-        String extension = fileExtension(originalFilename);
-        String validFolderId = folderId == null || folderId.isBlank() ? null : folderId;
-        if (validFolderId != null && folderRepository.findById(validFolderId)
-                .filter(folder -> userId.equals(folder.getUserId())).isEmpty()) {
-            throw new IllegalArgumentException("Không có quyền truy cập thư mục này");
-        }
+  public MediaFile mergeChunks(String guid, String name, int total, String user, String folder)
+      throws IOException {
+    validate(total);
+    String extension = fileExtension(name);
+    UploadCoordinator.Claim claim = uploads.claim(user, guid, name, total, folder);
+    if (claim.completed() != null) return claim.completed();
+    Path output = null;
+    try {
+      Path directory = directory(user, guid);
+      for (int index = 0; index < total; index++)
+        if (!Files.isRegularFile(directory.resolve(index + ".tmp"), LinkOption.NOFOLLOW_LINKS))
+          throw DomainException.invalid("Thiếu mảnh thứ " + index);
+      output = storage.allocate(claim.token(), extension);
+      long bytes = 0;
+      java.security.MessageDigest digest;
+      try {
+        digest = java.security.MessageDigest.getInstance("SHA-256");
+      } catch (java.security.NoSuchAlgorithmException error) {
+        throw new IllegalStateException(error);
+      }
+      try (OutputStream stream = new BufferedOutputStream(Files.newOutputStream(output))) {
+        for (int index = 0; index < total; index++)
+          try (InputStream input =
+              new java.security.DigestInputStream(
+                  Files.newInputStream(directory.resolve(index + ".tmp")), digest)) {
+            bytes += input.transferTo(stream);
+          }
+      }
+      MediaFile result =
+          new MediaFile(
+              claim.session().getResultFileId(),
+              InputRules.name(name),
+              storage.key(output),
+              extension,
+              bytes,
+              claim.session().getFolderId(),
+              user,
+              "Ready",
+              "Local_Upload");
+      result.setChecksum(java.util.HexFormat.of().formatHex(digest.digest()));
+      MediaFile saved = uploads.commit(claim, result);
+      if (!saved.getStoragePath().equals(result.getStoragePath())) storage.cleanup(output);
+      cleanup(user, guid);
+      return saved;
+    } catch (IOException | RuntimeException error) {
+      uploads.discard(claim, output, storage);
+      try {
+        uploads.failed(claim);
+      } catch (RuntimeException ignored) {
+      }
+      throw error;
+    }
+  }
 
-        synchronized (lockFor(uploadDir.getParent())) {
-            requireChunkCount(uploadDir.resolve("total-chunks"), totalChunks);
-            // Check every chunk before opening the final file. Failed merges can be retried.
-            for (int i = 0; i < totalChunks; i++) {
-                if (!Files.isRegularFile(uploadDir.resolve(i + ".tmp"))) {
-                    throw new IllegalArgumentException("Thiếu mảnh file thứ " + i);
-                }
-            }
-            String fileId = UUID.randomUUID().toString();
-            Path baseDir = Path.of(baseStorageDir).toAbsolutePath().normalize();
-            Files.createDirectories(baseDir);
-            Path finalPath = baseDir.resolve(fileId + (extension.isEmpty() ? "" : "." + extension));
-            MediaFile saved;
+  public record StatusView(
+      String uploadId,
+      String filename,
+      long size,
+      int totalChunks,
+      String folderId,
+      String status,
+      String resultFileId,
+      List<Integer> receivedChunks) {}
+
+  public StatusView status(String user, String guid) throws IOException {
+    UploadSession session = uploads.get(user, guid);
+    List<Integer> received = new ArrayList<>();
+    Path directory = directory(user, guid);
+    if (Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) {
+      try (var entries = Files.list(directory)) {
+        for (Path entry : entries.toList()) {
+          String name = entry.getFileName().toString();
+          if (name.matches("[0-9]+\\.tmp")
+              && Files.isRegularFile(entry, LinkOption.NOFOLLOW_LINKS)) {
             try {
-                long size = 0;
-                try (OutputStream output = new BufferedOutputStream(Files.newOutputStream(finalPath))) {
-                    for (int i = 0; i < totalChunks; i++) {
-                        try (InputStream input = Files.newInputStream(uploadDir.resolve(i + ".tmp"))) {
-                            size += input.transferTo(output);
-                        }
-                    }
-                }
-                MediaFile file = new MediaFile(fileId, originalFilename, finalPath.toString(), extension,
-                        size, validFolderId, userId, "Ready", "Local_Upload");
-                // The repository transaction commits before temporary chunks are removed.
-                saved = mediaFileRepository.saveAndFlush(file);
-            } catch (IOException | RuntimeException exception) {
-                try {
-                    Files.deleteIfExists(finalPath);
-                } catch (IOException cleanupFailure) {
-                    exception.addSuppressed(cleanupFailure);
-                }
-                throw exception;
+              int index = Integer.parseInt(name.substring(0, name.length() - 4));
+              if (index < session.getTotalChunks()) received.add(index);
+            } catch (NumberFormatException ignored) {
             }
-            try {
-                for (int i = 0; i < totalChunks; i++) Files.deleteIfExists(uploadDir.resolve(i + ".tmp"));
-                Files.deleteIfExists(uploadDir.resolve("total-chunks"));
-                Files.deleteIfExists(uploadDir);
-            } catch (IOException exception) {
-                log.warn("Không thể dọn các mảnh tạm của upload {}", fileGuid, exception);
-            }
-            return saved;
+          }
         }
+      }
     }
+    Collections.sort(received);
+    return new StatusView(
+        guid,
+        session.getFilename(),
+        session.getExpectedBytes() == null ? -1 : session.getExpectedBytes(),
+        session.getTotalChunks(),
+        session.getFolderId(),
+        session.getStatus().name(),
+        session.getStatus() == UploadSession.Status.COMPLETED ? session.getResultFileId() : null,
+        received);
+  }
 
-    @Scheduled(fixedDelayString = "${app.upload.cleanup-interval-ms:3600000}")
-    public void cleanupExpiredUploads() {
-        Path root = Path.of(tempStorageDir).toAbsolutePath().normalize();
-        if (!Files.isDirectory(root, LinkOption.NOFOLLOW_LINKS)) return;
-        try (var owners = Files.list(root)) {
-            for (Path owner : owners.filter(this::isUuidDirectory).toList()) {
-                synchronized (lockFor(owner)) {
-                    try { cleanupOwner(owner, System.currentTimeMillis()); }
-                    catch (IOException exception) { log.warn("Không thể dọn upload tạm của {}", owner.getFileName()); }
-                }
-            }
-        } catch (IOException exception) {
-            log.warn("Không thể đọc thư mục upload tạm");
-        }
-    }
+  public void abort(String user, String guid) {
+    uploads.abort(user, guid);
+    cleanup(user, guid);
+  }
 
-    private void enforceUploadLimits(Path owner, Path upload, int chunkIndex, long newSize) throws IOException {
-        if (!Files.exists(upload)) {
-            try (var active = Files.list(owner)) {
-                if (active.filter(this::isUuidDirectory).count() >= maxActiveUploads) {
-                    throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "Đã đạt giới hạn upload đang mở");
-                }
-            }
-        }
-        long used = 0;
-        try (var paths = Files.walk(owner)) {
-            for (Path path : paths.filter(item -> Files.isRegularFile(item, LinkOption.NOFOLLOW_LINKS)).toList()) {
-                String name = path.getFileName().toString();
-                if (name.endsWith(".tmp") || name.endsWith(".part")) used += Files.size(path);
-            }
-        }
-        Path previous = upload.resolve(chunkIndex + ".tmp");
-        long replaced = Files.isRegularFile(previous) ? Files.size(previous) : 0;
-        if (newSize > maxTempBytes - (used - replaced)) {
-            throw new ResponseStatusException(HttpStatus.PAYLOAD_TOO_LARGE, "Vượt giới hạn dung lượng upload tạm");
-        }
+  public boolean cleanup(String user, String guid) {
+    try {
+      Path target = directory(user, guid),
+          root = Path.of(tempStorageDir).toAbsolutePath().normalize();
+      if (!Files.exists(target, LinkOption.NOFOLLOW_LINKS)) return true;
+      if (Files.isSymbolicLink(target)
+          || !target.toRealPath().startsWith(root.toRealPath())
+          || target.getNameCount() != root.getNameCount() + 2)
+        throw new IOException("Unsafe upload cleanup");
+      try (var entries = Files.walk(target)) {
+        for (Path entry : entries.sorted(Comparator.reverseOrder()).toList())
+          Files.deleteIfExists(entry);
+      }
+      return true;
+    } catch (IOException error) {
+      return false;
     }
+  }
 
-    private void cleanupOwner(Path owner, long now) throws IOException {
-        try (var uploads = Files.list(owner)) {
-            for (Path upload : uploads.filter(this::isUuidDirectory).toList()) {
-                if (now - Files.getLastModifiedTime(upload).toMillis() < expireAfterMillis) continue;
-                Path root = Path.of(tempStorageDir).toAbsolutePath().normalize();
-                Path target = upload.toAbsolutePath().normalize();
-                if (!target.startsWith(root) || target.getNameCount() != root.getNameCount() + 2) {
-                    throw new IOException("Đường dẫn upload tạm không hợp lệ");
-                }
-                // Files.walk does not follow symbolic links. Only validated UUID upload directories are removed.
-                try (var paths = Files.walk(target)) {
-                    for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) Files.deleteIfExists(path);
-                }
-            }
-        }
+  private long temporaryBytes(Path owner) throws IOException {
+    if (!Files.isDirectory(owner)) return 0;
+    long bytes = 0;
+    try (var paths = Files.walk(owner)) {
+      for (Path path : paths.toList())
+        if (Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)
+            && (path.toString().endsWith(".tmp") || path.toString().endsWith(".part")))
+          bytes += Files.size(path);
     }
+    return bytes;
+  }
 
-    private boolean isUuidDirectory(Path path) {
-        if (!Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS)) return false;
-        try { return UUID.fromString(path.getFileName().toString()).toString().equals(path.getFileName().toString()); }
-        catch (IllegalArgumentException exception) { return false; }
-    }
+  private Path directory(String user, String guid) {
+    InputRules.uuid(user);
+    InputRules.uuid(guid);
+    return Path.of(tempStorageDir).toAbsolutePath().normalize().resolve(user).resolve(guid);
+  }
 
-    private Path uploadDirectory(String userId, String fileGuid) {
-        try {
-            String owner = UUID.fromString(userId).toString();
-            String upload = UUID.fromString(fileGuid).toString();
-            if (!owner.equals(userId) || !upload.equals(fileGuid)) throw new IllegalArgumentException();
-            return Path.of(tempStorageDir).toAbsolutePath().normalize().resolve(owner).resolve(upload);
-        } catch (IllegalArgumentException | NullPointerException exception) {
-            throw new IllegalArgumentException("Mã người dùng hoặc mã upload không hợp lệ");
-        }
-    }
+  private void validate(int total) {
+    if (total < 1 || total > 10000) throw DomainException.invalid("Số mảnh không hợp lệ");
+  }
 
-    private Object lockFor(Path uploadDir) {
-        return uploadLocks[Math.floorMod(uploadDir.hashCode(), uploadLocks.length)];
-    }
-
-    private void validateChunkCount(int totalChunks) {
-        if (totalChunks < 1 || totalChunks > MAX_CHUNKS) {
-            throw new IllegalArgumentException("Số lượng mảnh file không hợp lệ");
-        }
-    }
-
-    private void requireChunkCount(Path manifest, int totalChunks) throws IOException {
-        if (!Files.isRegularFile(manifest)
-                || !Integer.toString(totalChunks).equals(Files.readString(manifest))) {
-            throw new IllegalArgumentException("Không tìm thấy upload hoặc số lượng mảnh không khớp");
-        }
-    }
-
-    static String fileExtension(String filename) {
-        if (filename == null || filename.isBlank() || filename.length() > 255
-                || filename.contains("/") || filename.contains("\\") || filename.indexOf(0) >= 0) {
-            throw new IllegalArgumentException("Tên file không hợp lệ");
-        }
-        int dot = filename.lastIndexOf('.');
-        if (dot <= 0 || dot == filename.length() - 1) return "";
-        String extension = filename.substring(dot + 1);
-        if (!extension.matches("[a-zA-Z0-9]{1,10}")) {
-            throw new IllegalArgumentException("Phần mở rộng file không hợp lệ");
-        }
-        return extension;
-    }
+  public static String fileExtension(String name) {
+    String valid = InputRules.name(name);
+    int dot = valid.lastIndexOf('.');
+    if (dot <= 0 || dot == valid.length() - 1) return "";
+    String extension = valid.substring(dot + 1);
+    if (!extension.matches("[a-zA-Z0-9]{1,10}"))
+      throw DomainException.invalid("Phần mở rộng không hợp lệ");
+    return extension;
+  }
 }

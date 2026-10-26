@@ -1,61 +1,93 @@
 package com.cloudmedia.api.entity;
+
 import jakarta.persistence.*;
+
 @Entity
-@Table(name = "Folders")
-
+@Table(
+    name = "Folders",
+    indexes = {
+      @Index(name = "idx_folder_owner_parent", columnList = "user_id,parent_folder_id"),
+      @Index(name = "idx_folder_listing", columnList = "user_id,parent_folder_id,folder_name,id")
+    })
 public class Folder {
-    @Id
-    @Column(columnDefinition = "VARCHAR(36)")
-    private String id;
+  @Id
+  @Column(columnDefinition = "VARCHAR(36)")
+  private String id;
 
-    @Column(nullable = false)
-    private String folderName;
+  @org.hibernate.annotations.Nationalized
+  @Column(nullable = false)
+  private String folderName;
 
-    @Column(columnDefinition = "VARCHAR(36)")
-    private String parentFolderId; // Trỏ về Id của bảng này (NULL nếu ở gốc)
+  @org.hibernate.annotations.Nationalized
+  @Column(length = 255)
+  private String searchName;
 
-    @Column(columnDefinition = "VARCHAR(36)")
-    private String userId; // Trỏ về bảng Users
+  @PrePersist
+  @PreUpdate
+  void indexName() {
+    searchName = com.cloudmedia.api.domain.InputRules.normalized(folderName);
+  }
 
-    public Folder(String id, String folderName, String parentFolderId, String userId) {
-        this.id = id;
-        this.folderName = folderName;
-        this.parentFolderId = parentFolderId;
-        this.userId = userId;
-    }
-    public Folder() {
-    }
-    public String getId() {
-        return id;
-    }
+  @com.fasterxml.jackson.annotation.JsonIgnore
+  public String getSearchName() {
+    return searchName;
+  }
 
-    public String getFolderName() {
-        return folderName;
-    }
+  @Column(name = "parent_folder_id", columnDefinition = "VARCHAR(36)")
+  private String parentFolderId; // Trỏ về Id của bảng này (NULL nếu ở gốc)
 
-    public String getParentFolderId() {
-        return parentFolderId;
-    }
+  @Column(columnDefinition = "VARCHAR(36)")
+  private String userId; // Trỏ về bảng Users
 
-    public String getUserId() {
-        return userId;
-    }
+  @com.fasterxml.jackson.annotation.JsonIgnore
+  @ManyToOne(fetch = FetchType.LAZY)
+  @JoinColumn(
+      name = "parent_folder_id",
+      insertable = false,
+      updatable = false,
+      foreignKey = @ForeignKey(name = "fk_folder_parent"))
+  private Folder parentReference;
 
-    public void setId(String id) {
-        this.id = id;
-    }
+  public Folder(String id, String folderName, String parentFolderId, String userId) {
+    this.id = id;
+    this.folderName = folderName;
+    this.parentFolderId = parentFolderId;
+    this.userId = userId;
+  }
 
-    public void setFolderName(String folderName) {
-        this.folderName = folderName;
-    }
+  public Folder() {}
 
-    public void setParentFolderId(String parentFolderId) {
-        this.parentFolderId = parentFolderId;
-    }
+  public String getId() {
+    return id;
+  }
 
-    public void setUserId(String userId) {
-        this.userId = userId;
-    }
+  public String getFolderName() {
+    return folderName;
+  }
 
-    // Getters và Setters...
+  public String getParentFolderId() {
+    return parentFolderId;
+  }
+
+  public String getUserId() {
+    return userId;
+  }
+
+  public void setId(String id) {
+    this.id = id;
+  }
+
+  public void setFolderName(String folderName) {
+    this.folderName = folderName;
+  }
+
+  public void setParentFolderId(String parentFolderId) {
+    this.parentFolderId = parentFolderId;
+  }
+
+  public void setUserId(String userId) {
+    this.userId = userId;
+  }
+
+  // Getters và Setters...
 }

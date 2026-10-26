@@ -1,67 +1,94 @@
 package com.cloudmedia.api.service;
 
-import java.util.List;
-import java.util.UUID;
-
+import com.cloudmedia.api.cache.DriveCache;
+import com.cloudmedia.api.domain.*;
+import com.cloudmedia.api.entity.*;
+import com.cloudmedia.api.repository.*;
+import java.time.Instant;
+import java.util.*;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
-import com.cloudmedia.api.entity.Folder;
-import com.cloudmedia.api.repository.FolderRepository;
-import com.cloudmedia.api.repository.MediaFileRepository;
 @Service
-public class FolderService{
-    private final FolderRepository folderRepository;
-    private final MediaFileRepository mediaFileRepository;
-    public FolderService(FolderRepository folderRepository, MediaFileRepository mediaFileRepository) {
-        this.folderRepository = folderRepository;
-        this.mediaFileRepository = mediaFileRepository;
-    }
-    public Folder createFolder(String folderName, String parentFolderId, String userId) {
-        String validParentId = (parentFolderId != null && !parentFolderId.trim().isEmpty()) ? parentFolderId : null;
-        if (validParentId != null) getFolderById(validParentId, userId);
+public class FolderService {
+  private final FolderRepository folders;
+  private final MediaFileRepository files;
+  private final DriveCache cache;
+  private final AccountTransactions accounts;
+  private final MediaJobRepository jobs;
+  private final UploadSessionRepository uploads;
 
-        Folder folder = new Folder();
-        folder.setId(UUID.randomUUID().toString());
-        folder.setFolderName(folderName);
-        folder.setParentFolderId(validParentId);
-        folder.setUserId(userId);
-        
-        return folderRepository.save(folder);
-    }
-    public List<Folder> getFolders(String userId, String parentFolderId) {
-        if (parentFolderId == null || parentFolderId.trim().isEmpty()) {
-            // Lấy các thư mục nằm ở ngoài cùng (gốc - không có parent)
-            return folderRepository.findByUserIdAndParentFolderIdIsNull(userId);
-        }
-        return folderRepository.findByUserIdAndParentFolderId(userId, parentFolderId);
-    }
-    public Folder getFolderById(String folderId, String userId) {
-        return folderRepository.findById(folderId)
-                .filter(folder -> folder.getUserId().equals(userId))
-                .orElseThrow(() -> new RuntimeException("Không tìm thấy thư mục hoặc bạn không có quyền truy cập!"));
-    }
-    public Folder updateFolderName(String folderId, String newFolderName, String userId) {
-        Folder folder = getFolderById(folderId, userId);
-        folder.setFolderName(newFolderName);
-        return folderRepository.save(folder);
-    }
-    @Transactional
-    public void deleteFolder(String folderId, String userId) {
-        // 5.1. Xác thực thư mục thuộc quyền sở hữu của user
-        Folder folder = getFolderById(folderId, userId);
+  public FolderService(
+      FolderRepository folders,
+      MediaFileRepository files,
+      DriveCache cache,
+      AccountTransactions accounts,
+      MediaJobRepository jobs,
+      UploadSessionRepository uploads) {
+    this.folders = folders;
+    this.files = files;
+    this.cache = cache;
+    this.accounts = accounts;
+    this.jobs = jobs;
+    this.uploads = uploads;
+  }
 
-        // 5.2. Kiểm tra xem thư mục có đang chứa thư mục con nào không
-        List<Folder> subFolders = folderRepository.findByUserIdAndParentFolderId(userId, folderId);
-        if (!subFolders.isEmpty()) {
-            throw new RuntimeException("Không thể xóa! Thư mục này đang chứa các thư mục con. Hãy xóa hoặc di chuyển chúng trước.");
-        }
+  public Folder createFolder(String name, String parent, String user) {
+    String valid = InputRules.name(name),
+        destination = parent == null || parent.isBlank() ? null : parent;
+    return accounts.locked(
+        user,
+        () -> {
+          if (destination != null) getFolderById(destination, user);
+          Folder result =
+              folders.saveAndFlush(
+                  new Folder(UUID.randomUUID().toString(), valid, destination, user));
+          cache.invalidateAfterCommit(user);
+          return result;
+        });
+  }
 
-        boolean hasFiles = !mediaFileRepository.findByUserIdAndFolderId(userId, folderId).isEmpty();
-        if (hasFiles) {
-            throw new RuntimeException("Không thể xóa! Thư mục này đang chứa các tệp tin đa phương tiện.");
-        }
+  public List<Folder> getFolders(String user, String parent) {
+    return parent == null || parent.isBlank()
+        ? folders.findByUserIdAndParentFolderIdIsNull(user)
+        : folders.findByUserIdAndParentFolderId(user, parent);
+  }
 
-        folderRepository.delete(folder);
-    }
+  public Folder getFolderById(String id, String user) {
+    return folders
+        .findById(id)
+        .filter(f -> user.equals(f.getUserId()))
+        .orElseThrow(DomainException::missing);
+  }
+
+  public Folder updateFolderName(String id, String name, String user) {
+    String valid = InputRules.name(name);
+    return accounts.locked(
+        user,
+        () -> {
+          Folder found = getFolderById(id, user);
+          found.setFolderName(valid);
+          Folder result = folders.saveAndFlush(found);
+          cache.invalidateAfterCommit(user);
+          return result;
+        });
+  }
+
+  public void deleteFolder(String id, String user) {
+    accounts.locked(
+        user,
+        () -> {
+          Folder found = getFolderById(id, user);
+          if (jobs.existsByUserIdAndFolderIdAndStatusIn(user, id, MediaJob.ACTIVE)
+              || uploads.existsByUserIdAndFolderIdAndStatusInAndExpiresAtAfter(
+                  user, id, QuotaService.UPLOAD_ACTIVE, Instant.now()))
+            throw DomainException.conflict(
+                "FOLDER_BUSY", "Thư mục đang có tác vụ hoặc upload hoạt động");
+          if (!folders.findByUserIdAndParentFolderId(user, id).isEmpty()
+              || !files.findByUserIdAndFolderId(user, id).isEmpty())
+            throw DomainException.conflict("FOLDER_NOT_EMPTY", "Chỉ có thể xóa thư mục trống");
+          folders.delete(found);
+          folders.flush();
+          cache.invalidateAfterCommit(user);
+        });
+  }
 }
