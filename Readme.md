@@ -41,6 +41,8 @@ Tạo/đổi tên/xóa thư mục hoặc tệp, hoàn tất upload/gộp mảnh 
 
 Khi Redis lỗi, API đọc từ SQL Server; một lần vô hiệu hóa cache thất bại sẽ tạm bỏ qua cache trong instance đó tới khi TTL cũ kết thúc. Các instance khác có thể còn đọc cache cũ tối đa TTL nếu thông báo cập nhật bị mất trong lúc Redis gián đoạn. Thay đổi trực tiếp trong database được phản ánh khi cache hết hạn. Mỗi entry cache tối đa 2 MiB.
 
+Tài liệu API tương tác: sau khi khởi động, mở `http://localhost:8080/swagger-ui/index.html`. Chạy `/api/auth/login` trong Swagger để thử API bằng cookie hiện có. OpenAPI JSON tại `/v3/api-docs`; đặt `SWAGGER_ENABLED=false` để tắt. Xem [hướng dẫn Swagger UI](docs/swagger-ui.md).
+
 Chạy dự án
 
 1. Chuẩn bị JDK 17, SQL Server với database `CloudMediaDrive`, FFmpeg, yt-dlp, RabbitMQ và Redis (hoặc Docker Desktop để chạy broker/cache bằng Compose).

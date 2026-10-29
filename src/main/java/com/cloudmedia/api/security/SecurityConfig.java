@@ -1,6 +1,7 @@
 package com.cloudmedia.api.security;
 
 import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
@@ -15,6 +16,9 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 public class SecurityConfig {
 
   private final JwtAuthenticationFilter jwtAuthenticationFilter;
+
+  @Value("${app.docs.enabled:true}")
+  private boolean documentationEnabled;
 
   public SecurityConfig(JwtAuthenticationFilter jwtAuthenticationFilter) {
     this.jwtAuthenticationFilter = jwtAuthenticationFilter;
@@ -36,6 +40,9 @@ public class SecurityConfig {
         .authorizeHttpRequests(
             auth ->
                 auth.requestMatchers(
+                        request -> documentationEnabled && DocumentationPaths.isPublicRead(request))
+                    .permitAll()
+                    .requestMatchers(
                         HttpMethod.GET,
                         "/s/*",
                         "/share.html",

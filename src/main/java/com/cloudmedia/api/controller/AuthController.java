@@ -5,6 +5,7 @@ import com.cloudmedia.api.repository.UserRepository;
 import com.cloudmedia.api.security.JwtUtils;
 import com.cloudmedia.api.service.AuthSessionService;
 import com.cloudmedia.api.service.UserService;
+import io.swagger.v3.oas.annotations.Operation;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import java.util.Map;
@@ -64,6 +65,11 @@ public class AuthController {
   }
 
   @PostMapping("/login")
+  @Operation(
+      summary = "Đăng nhập và cấp cookie HttpOnly",
+      description =
+          "Chạy endpoint này trước khi thử API được bảo vệ. Trình duyệt tự gửi cookie "
+              + "access_token; response JSON không chứa JWT. Dùng tài khoản thực của bạn.")
   public ResponseEntity<?> login(@RequestBody LoginRequest request, HttpServletRequest http) {
     limiter.check("login", http.getRemoteAddr(), String.valueOf(request.username()));
     Map<String, String> tokens = userService.loginUser(request.username(), request.password());
@@ -100,6 +106,10 @@ public class AuthController {
   }
 
   @PostMapping("/refresh")
+  @Operation(
+      summary = "Gia hạn access token bằng refresh cookie",
+      description =
+          "Cần cookie refresh_token từ lần đăng nhập trước; cookie access_token được cập nhật.")
   public ResponseEntity<?> refreshToken(HttpServletRequest request) {
     String token = readCookie(request, "refresh_token");
     if (token != null && jwtUtils.validateRefreshToken(token) && sessions.isActive(token)) {

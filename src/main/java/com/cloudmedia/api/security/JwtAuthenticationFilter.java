@@ -8,6 +8,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.util.ArrayList;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
@@ -20,6 +21,9 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
   private final JwtUtils jwtUtils;
   private final AuthSessionService sessions;
 
+  @Value("${app.docs.enabled:true}")
+  private boolean documentationEnabled;
+
   public JwtAuthenticationFilter(JwtUtils jwtUtils, AuthSessionService sessions) {
     this.sessions = sessions;
     this.jwtUtils = jwtUtils;
@@ -29,7 +33,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
   protected boolean shouldNotFilter(HttpServletRequest request) {
     String path = request.getRequestURI().substring(request.getContextPath().length());
     boolean read = "GET".equals(request.getMethod()) || "HEAD".equals(request.getMethod());
-    return path.startsWith("/api/auth/")
+    return documentationEnabled && DocumentationPaths.isPublicRead(request)
+        || path.startsWith("/api/auth/")
         || read
             && (path.startsWith("/api/public/shares/")
                 || path.startsWith("/s/")

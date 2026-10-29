@@ -62,7 +62,9 @@ public class ChunkUploadController {
     return ResponseEntity.noContent().build();
   }
 
-  @PostMapping("/upload-chunk")
+  @PostMapping(
+      value = "/upload-chunk",
+      consumes = org.springframework.http.MediaType.MULTIPART_FORM_DATA_VALUE)
   public Object uploadChunk(
       @RequestParam("file") MultipartFile chunk,
       @RequestParam String fileGuid,

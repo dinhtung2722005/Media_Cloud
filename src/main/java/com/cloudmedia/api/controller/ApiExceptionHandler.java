@@ -54,6 +54,11 @@ public class ApiExceptionHandler {
         error.getReason() == null ? "Không thể hoàn tất yêu cầu" : error.getReason());
   }
 
+  @ExceptionHandler(org.springframework.web.servlet.resource.NoResourceFoundException.class)
+  public ResponseEntity<?> missingResource(Exception error) {
+    return response(404, "NOT_FOUND", "Không tìm thấy tài nguyên");
+  }
+
   @ExceptionHandler(Exception.class)
   public ResponseEntity<?> unexpected(Exception error) {
     log.error("Unhandled request failure ({})", error.getClass().getSimpleName());

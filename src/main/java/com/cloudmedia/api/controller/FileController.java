@@ -23,7 +23,7 @@ public class FileController {
 
   public record RenameRequest(String title) {}
 
-  @PostMapping("/upload")
+  @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
   public ResponseEntity<?> uploadFile(
       @RequestParam("file") MultipartFile file,
       @RequestParam(required = false) String folderId,
